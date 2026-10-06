@@ -19,5 +19,3 @@ rf_monitor.db
 *.before-*.py
 *.before-*.css
 
-# Downloaded manufacturer/OUI databases
-data/
