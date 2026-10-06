@@ -142,10 +142,6 @@ The following are deliberately excluded from the repository:
     *.db-journal
     *.log
     rf_monitor.db
-    old/
-    web/old/
-    web/static/old/
-    web/templates/old/
 
 The virtual environment is recreated during installation.
 
