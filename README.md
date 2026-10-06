@@ -147,8 +147,6 @@ The virtual environment is recreated during installation.
 
 The SQLite database is created locally on each installation.
 
-Old development and backup files are not required for a fresh installation.
-
 ## Running the application
 
 Each time you want to run RF Monitor:
