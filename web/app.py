@@ -412,6 +412,28 @@ def ensure_database_schema(db):
     """)
 
     # -----------------------------------------------------------------------
+    # Application settings
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    db.execute("""
+        INSERT OR IGNORE INTO app_settings (
+            key,
+            value
+        )
+        VALUES (
+            'bluetooth_adapter',
+            'auto'
+        )
+    """)
+
+    # -----------------------------------------------------------------------
     # Indexes
     # -----------------------------------------------------------------------
 
@@ -1339,6 +1361,87 @@ def api_collector_stop():
 
 
 # ===========================================================================
+# Bluetooth adapter settings
+# ===========================================================================
+
+def get_bluetooth_adapter():
+    """
+    Return the configured Bluetooth adapter.
+
+    'auto' means Bleak/BlueZ should use the default adapter.
+    """
+
+    db = get_db()
+
+    try:
+
+        ensure_database_schema(db)
+
+        row = db.execute("""
+            SELECT value
+            FROM app_settings
+            WHERE key = 'bluetooth_adapter'
+        """).fetchone()
+
+        if row is None:
+            return "auto"
+
+        value = row["value"]
+
+        if value is None:
+            return "auto"
+
+        value = str(value).strip()
+
+        return value or "auto"
+
+    finally:
+
+        db.close()
+
+
+def set_bluetooth_adapter(value):
+    """
+    Save the configured Bluetooth adapter.
+
+    Blank values are stored as 'auto'.
+    """
+
+    value = str(value or "").strip()
+
+    if not value:
+        value = "auto"
+
+    db = get_db()
+
+    try:
+
+        ensure_database_schema(db)
+
+        db.execute("""
+            INSERT INTO app_settings (
+                key,
+                value
+            )
+            VALUES (
+                'bluetooth_adapter',
+                ?
+            )
+            ON CONFLICT(key)
+            DO UPDATE SET
+                value = excluded.value
+        """, (value,))
+
+        db.commit()
+
+    finally:
+
+        db.close()
+
+    return value
+
+
+# ===========================================================================
 # Settings
 # ===========================================================================
 
@@ -1347,9 +1450,12 @@ def settings():
 
     databases = get_all_database_status()
 
+    bluetooth_adapter = get_bluetooth_adapter()
+
     return render_template(
         "settings.html",
         databases=databases,
+        bluetooth_adapter=bluetooth_adapter,
     )
 
 
@@ -1501,6 +1607,66 @@ def api_update_database(database_id):
 # ===========================================================================
 # Application information
 # ===========================================================================
+
+@app.route(
+    "/api/settings/bluetooth-adapter",
+    methods=["GET", "POST"],
+)
+def api_bluetooth_adapter():
+
+    try:
+
+        if request.method == "GET":
+
+            return jsonify({
+                "bluetooth_adapter":
+                    get_bluetooth_adapter(),
+            })
+
+        data = request.get_json(
+            silent=True
+        ) or {}
+
+        value = data.get(
+            "bluetooth_adapter",
+            "auto",
+        )
+
+        value = str(value or "").strip()
+
+        # Keep the value deliberately simple.  On Raspberry Pi/BlueZ
+        # the normal values are things such as hci0, hci1, etc.
+        # "auto" means use the default adapter.
+
+        if value.lower() == "auto":
+            value = "auto"
+
+        elif not value.startswith("hci"):
+            return jsonify({
+                "success": False,
+                "error":
+                    "Bluetooth adapter must be "
+                    "'auto' or an adapter such as 'hci0'.",
+            }), 400
+
+        set_bluetooth_adapter(value)
+
+        return jsonify({
+            "success": True,
+            "bluetooth_adapter": value,
+        })
+
+    except Exception as exc:
+
+        app.logger.exception(
+            "Unable to save Bluetooth adapter"
+        )
+
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 500
+
 
 @app.route("/api/settings")
 def api_settings():

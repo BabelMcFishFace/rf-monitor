@@ -68,6 +68,78 @@
 
     <section class="panel">
 
+        <div class="panel-header">
+
+            <div>
+
+                <h2>
+                    Bluetooth Adapter
+                </h2>
+
+                <p class="settings-intro">
+
+                    Select which Bluetooth adapter RF Monitor should
+                    use for BLE scanning on this installation.
+
+                    Leave this set to <strong>auto</strong> to use
+                    the system default adapter.
+
+                </p>
+
+            </div>
+
+        </div>
+
+        <div
+            class="database-actions"
+            style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"
+        >
+
+            <label
+                for="bluetooth-adapter"
+                style="font-weight:bold;"
+            >
+                Adapter:
+            </label>
+
+            <input
+                id="bluetooth-adapter"
+                type="text"
+                value="{{ bluetooth_adapter }}"
+                placeholder="auto or hci0"
+                style="min-width:180px;"
+            >
+
+            <button
+                type="button"
+                class="refresh-button"
+                onclick="saveBluetoothAdapter()"
+            >
+                Save
+            </button>
+
+            <span
+                id="bluetooth-adapter-message"
+                class="database-message"
+            ></span>
+
+        </div>
+
+        <p class="settings-intro">
+
+            Examples: <code>auto</code>, <code>hci0</code>,
+            <code>hci1</code>.
+
+            The collector must be restarted after changing this
+            setting.
+
+        </p>
+
+    </section>
+
+
+    <section class="panel">
+
 
         <div class="panel-header">
 
@@ -639,6 +711,92 @@ async function updateDatabase(
 
     }
 
+}
+
+
+async function saveBluetoothAdapter() {
+
+    const input =
+        document.getElementById(
+            "bluetooth-adapter"
+        );
+
+    const message =
+        document.getElementById(
+            "bluetooth-adapter-message"
+        );
+
+    if (!input || !message) {
+        return;
+    }
+
+    const value =
+        input.value.trim() || "auto";
+
+    message.textContent =
+        "Saving...";
+
+    message.className =
+        "database-message";
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/settings/bluetooth-adapter",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        bluetooth_adapter:
+                            value
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Unable to save adapter"
+            );
+
+        }
+
+        input.value =
+            result.bluetooth_adapter;
+
+        message.textContent =
+            "Saved. Restart the collector to apply the change.";
+
+        message.className =
+            "database-message success";
+
+    } catch (error) {
+
+        console.error(
+            "Bluetooth adapter save failed:",
+            error
+        );
+
+        message.textContent =
+            "Save failed: " +
+            error.message;
+
+        message.className =
+            "database-message error";
+    }
 }
 
 

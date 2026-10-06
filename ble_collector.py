@@ -58,6 +58,39 @@ from bleak import BleakScanner
 # SQLite database is kept in the project directory.
 DB_PATH = "rf_monitor.db"
 
+
+def get_bluetooth_adapter(db):
+    """
+    Read the Bluetooth adapter selected in the web settings.
+
+    'auto' means use Bleak's default BlueZ adapter.
+    """
+
+    try:
+
+        row = db.execute("""
+            SELECT value
+            FROM app_settings
+            WHERE key = 'bluetooth_adapter'
+        """).fetchone()
+
+    except sqlite3.OperationalError:
+
+        # Older databases/installations may not have the table yet.
+        return "auto"
+
+    if row is None:
+        return "auto"
+
+    value = row[0]
+
+    if value is None:
+        return "auto"
+
+    value = str(value).strip()
+
+    return value or "auto"
+
 # How often to store a normal RSSI observation for a device even when the
 # advertisement fingerprint has not changed.
 #
@@ -237,6 +270,24 @@ def init_db():
     # below. SQLite does not support IF NOT EXISTS for ADD COLUMN, so
     # we check the existing schema first.
     #
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    db.execute("""
+        INSERT OR IGNORE INTO app_settings (
+            key,
+            value
+        )
+        VALUES (
+            'bluetooth_adapter',
+            'auto'
+        )
+    """)
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS ble_devices (
             address TEXT PRIMARY KEY,
@@ -684,8 +735,27 @@ async def main():
     # Make the database available to the callback.
     detection_callback.db = db
 
+    bluetooth_adapter = get_bluetooth_adapter(
+        db
+    )
+
+    print(
+        f"Bluetooth adapter: {bluetooth_adapter}"
+    )
+
+    scanner_kwargs = {
+        "detection_callback":
+            detection_callback
+    }
+
+    if bluetooth_adapter != "auto":
+
+        scanner_kwargs["adapter"] = (
+            bluetooth_adapter
+        )
+
     scanner = BleakScanner(
-        detection_callback=detection_callback
+        **scanner_kwargs
     )
 
     print("BLE collector v2 starting")
