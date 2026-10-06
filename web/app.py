@@ -324,10 +324,94 @@ def get_db():
 
 def ensure_database_schema(db):
     """
-    Ensure tables required by the dashboard exist.
+    Ensure all tables required by the application exist.
 
-    Existing tables are not modified.
+    This makes a completely fresh installation usable before the BLE
+    collector has ever been started.
+
+    Existing tables and data are preserved.
     """
+
+    # -----------------------------------------------------------------------
+    # BLE devices
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS ble_devices (
+            address TEXT PRIMARY KEY,
+            name TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            last_rssi INTEGER,
+            sightings INTEGER NOT NULL DEFAULT 0,
+            min_rssi INTEGER,
+            max_rssi INTEGER,
+            avg_rssi REAL,
+            rssi_samples INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # Raw BLE observations
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS ble_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            address TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            rssi INTEGER,
+            name TEXT,
+            service_uuids TEXT,
+            manufacturer_data TEXT,
+            service_data TEXT,
+            tx_power INTEGER
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # BLE fingerprints
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS ble_fingerprints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            address TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            sightings INTEGER NOT NULL DEFAULT 1,
+            name TEXT,
+            service_uuids TEXT,
+            manufacturer_data TEXT,
+            service_data TEXT,
+            tx_power INTEGER,
+            UNIQUE(address, fingerprint)
+        )
+    """)
+
+    # -----------------------------------------------------------------------
+    # Indexes
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ble_observations_address
+        ON ble_observations(address)
+    """)
+
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ble_observations_timestamp
+        ON ble_observations(timestamp)
+    """)
+
+    db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ble_fingerprints_address
+        ON ble_fingerprints(address)
+    """)
+
+    # -----------------------------------------------------------------------
+    # Manufacturer cache
+    # -----------------------------------------------------------------------
 
     db.execute("""
         CREATE TABLE IF NOT EXISTS manufacturer_cache (
