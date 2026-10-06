@@ -391,6 +391,27 @@ def ensure_database_schema(db):
     """)
 
     # -----------------------------------------------------------------------
+    # Device signatures
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS device_signatures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            device_type TEXT,
+            description TEXT,
+            manufacturer_id INTEGER,
+            service_uuid TEXT,
+            manufacturer_prefix TEXT,
+            service_data_prefix TEXT,
+            min_rssi INTEGER,
+            max_rssi INTEGER,
+            confidence INTEGER NOT NULL DEFAULT 50,
+            enabled INTEGER NOT NULL DEFAULT 1
+        )
+    """)
+
+    # -----------------------------------------------------------------------
     # Indexes
     # -----------------------------------------------------------------------
 
