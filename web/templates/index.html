@@ -212,11 +212,13 @@
 
                                     {% endif %}
 
-                                    <br>
+                                    {% if manufacturer['id'] is not none %}
+                                        <br>
 
-                                    <small class="mono">
-                                        ID {{ manufacturer['id'] }}
-                                    </small>
+                                        <small class="mono">
+                                            ID {{ manufacturer['id'] }}
+                                        </small>
+                                    {% endif %}
 
                                     {% if not loop.last %}
                                         <br><br>
