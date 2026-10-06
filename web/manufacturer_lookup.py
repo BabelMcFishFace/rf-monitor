@@ -433,7 +433,10 @@ def identify_manufacturer(
     # IEEE MAC lookup
     # ------------------------------------------------------------------
 
-    if mac_address:
+    if (
+        mac_address
+        and manufacturer_id is None
+    ):
 
         ieee_result = lookup_ieee_mac(
             mac_address
