@@ -148,7 +148,15 @@ def load_company_ids():
 
 def lookup_company_id(manufacturer_id):
     """
-    Look up a Bluetooth Company Identifier locally.
+    Look up a Bluetooth Company Identifier in the official local database.
+
+    Custom Company IDs are deliberately NOT checked here.
+
+    The caller can therefore enforce the lookup order:
+
+        1. Official database
+        2. Custom database
+        3. Internet fallback
     """
 
     try:
@@ -162,6 +170,55 @@ def lookup_company_id(manufacturer_id):
     return company_ids.get(
         manufacturer_id
     )
+
+
+def lookup_custom_company_id(db, manufacturer_id):
+    """
+    Look up a user-defined Bluetooth Company Identifier.
+
+    Returns the custom company name or None.
+
+    Custom entries are only consulted after the official Company ID
+    database has failed to identify the manufacturer.
+    """
+
+    if db is None:
+        return None
+
+    try:
+        manufacturer_id = int(manufacturer_id)
+
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        row = db.execute(
+            """
+            SELECT company_name
+            FROM custom_company_ids
+            WHERE company_id = ?
+            """,
+            (manufacturer_id,),
+        ).fetchone()
+
+    except Exception:
+        return None
+
+    if row is None:
+        return None
+
+    try:
+        name = row["company_name"]
+    except (TypeError, KeyError, IndexError):
+        try:
+            name = row[0]
+        except (TypeError, IndexError):
+            return None
+
+    if not name:
+        return None
+
+    return str(name).strip() or None
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +515,10 @@ def identify_manufacturer(
 
     if manufacturer_id is not None:
 
+        # --------------------------------------------------------------
+        # 1. Official Bluetooth Company ID database
+        # --------------------------------------------------------------
+
         name = lookup_company_id(
             manufacturer_id
         )
@@ -472,8 +533,30 @@ def identify_manufacturer(
                 ),
             }
 
+        # --------------------------------------------------------------
+        # 2. User-defined/custom Company ID database
+        #
+        # This is deliberately checked ONLY after the official
+        # database has failed.
+        # --------------------------------------------------------------
+
+        name = lookup_custom_company_id(
+            db,
+            manufacturer_id
+        )
+
+        if name:
+
+            return {
+                "id": manufacturer_id,
+                "name": name,
+                "source": (
+                    "Custom Company ID"
+                ),
+            }
+
     # ------------------------------------------------------------------
-    # Optional internet fallback
+    # 3. Optional internet fallback
     # ------------------------------------------------------------------
 
     if (

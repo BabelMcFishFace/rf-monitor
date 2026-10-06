@@ -140,6 +140,175 @@
 
     <section class="panel">
 
+        <div class="panel-header">
+
+            <div>
+
+                <h2>
+                    Custom Bluetooth Company IDs
+                </h2>
+
+                <p class="settings-intro">
+
+                    Add a Company ID manually when the official
+                    Bluetooth Company ID database does not identify
+                    a device and you know what the device is.
+
+                    RF Monitor checks the official database first,
+                    then these custom entries, and only then uses
+                    the internet fallback.
+
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div
+            class="database-actions"
+            style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;"
+        >
+
+            <label
+                for="custom-company-id"
+                style="font-weight:bold;"
+            >
+                Company ID:
+            </label>
+
+            <input
+                id="custom-company-id"
+                type="number"
+                min="0"
+                max="65535"
+                placeholder="e.g. 12345"
+                style="width:140px;"
+            >
+
+            <label
+                for="custom-company-name"
+                style="font-weight:bold;"
+            >
+                Company name:
+            </label>
+
+            <input
+                id="custom-company-name"
+                type="text"
+                maxlength="200"
+                placeholder="e.g. My Device Company"
+                style="min-width:240px;"
+            >
+
+            <button
+                type="button"
+                class="refresh-button"
+                onclick="saveCustomCompanyId()"
+            >
+                Add / Save
+            </button>
+
+            <span
+                id="custom-company-message"
+                class="database-message"
+            ></span>
+
+        </div>
+
+
+        <p class="settings-intro">
+
+            If the Company ID already exists below, saving it will
+            update its custom name.
+
+        </p>
+
+
+        <div
+            id="custom-company-list"
+            style="margin-top:20px;"
+        >
+
+            {% if custom_company_ids %}
+
+                {% for company in custom_company_ids %}
+
+                    <div
+                        class="database-card custom-company-card"
+                        data-company-id="{{ company['company_id'] }}"
+                    >
+
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:center; gap:20px; flex-wrap:wrap;"
+                        >
+
+                            <div>
+
+                                <strong>
+                                    Company ID
+                                    {{ company['company_id'] }}
+                                </strong>
+
+                                <div
+                                    style="margin-top:5px;"
+                                >
+                                    {{ company['company_name'] }}
+                                </div>
+
+                            </div>
+
+                            <div
+                                style="display:flex; gap:10px; align-items:center;"
+                            >
+
+                                <button
+                                    type="button"
+                                    class="refresh-button"
+                                    onclick="editCustomCompanyId(
+                                        {{ company['company_id'] }},
+                                        {{ company['company_name']|tojson }}
+                                    )"
+                                >
+                                    Edit
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="refresh-button"
+                                    onclick="deleteCustomCompanyId(
+                                        {{ company['company_id'] }}
+                                    )"
+                                >
+                                    Delete
+                                </button>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                {% endfor %}
+
+            {% else %}
+
+                <p
+                    id="custom-company-empty"
+                    class="settings-intro"
+                >
+                    No custom Company IDs configured.
+                </p>
+
+            {% endif %}
+
+        </div>
+
+    </section>
+
+
+    <section class="panel">
+
 
         <div class="panel-header">
 
@@ -360,27 +529,27 @@
         <ol>
 
             <li>
-                RF Monitor checks the local databases first.
+                RF Monitor checks the local IEEE MAC/OUI databases.
             </li>
 
             <li>
-                The captured MAC address can be checked against
-                the local IEEE databases.
+                Bluetooth Company IDs are checked against the
+                official local Company ID database first.
             </li>
 
             <li>
-                Bluetooth manufacturer/company IDs can be checked
-                against the local Company ID database.
+                If the official database has no match, RF Monitor
+                checks the custom Company IDs configured above.
             </li>
 
             <li>
-                Internet access is only required when an online
-                fallback is explicitly used.
+                If there is still no match, the optional internet
+                fallback can be used.
             </li>
 
             <li>
-                Updating these files does not require restarting
-                the BLE collector.
+                Updating these files or changing custom Company IDs
+                does not require restarting the BLE collector.
             </li>
 
         </ol>
@@ -797,6 +966,389 @@ async function saveBluetoothAdapter() {
         message.className =
             "database-message error";
     }
+}
+
+
+
+function showCustomCompanyMessage(
+    message,
+    success
+) {
+
+    const element =
+        document.getElementById(
+            "custom-company-message"
+        );
+
+    if (!element) {
+        return;
+    }
+
+    element.textContent = message;
+
+    element.className =
+        success
+            ? "database-message success"
+            : "database-message error";
+}
+
+
+async function saveCustomCompanyId() {
+
+    const idInput =
+        document.getElementById(
+            "custom-company-id"
+        );
+
+    const nameInput =
+        document.getElementById(
+            "custom-company-name"
+        );
+
+    if (!idInput || !nameInput) {
+        return;
+    }
+
+    const companyId =
+        idInput.value.trim();
+
+    const companyName =
+        nameInput.value.trim();
+
+    if (!companyId) {
+
+        showCustomCompanyMessage(
+            "Please enter a Company ID.",
+            false
+        );
+
+        return;
+    }
+
+    const numericId =
+        Number(companyId);
+
+    if (
+        !Number.isInteger(numericId) ||
+        numericId < 0 ||
+        numericId > 65535
+    ) {
+
+        showCustomCompanyMessage(
+            "Company ID must be between 0 and 65535.",
+            false
+        );
+
+        return;
+    }
+
+    if (!companyName) {
+
+        showCustomCompanyMessage(
+            "Please enter a company name.",
+            false
+        );
+
+        return;
+    }
+
+    showCustomCompanyMessage(
+        "Saving...",
+        true
+    );
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/settings/custom-company-ids",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        company_id:
+                            numericId,
+
+                        company_name:
+                            companyName
+                    })
+                }
+            );
+
+        const result =
+            await response.json();
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Unable to save Company ID."
+            );
+
+        }
+
+        idInput.value = "";
+        nameInput.value = "";
+
+        showCustomCompanyMessage(
+            result.action === "updated"
+                ? "Custom Company ID updated."
+                : "Custom Company ID added.",
+            true
+        );
+
+        renderCustomCompanyIds(
+            result.custom_company_ids || []
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Custom Company ID save failed:",
+            error
+        );
+
+        showCustomCompanyMessage(
+            "Save failed: " +
+            error.message,
+            false
+        );
+    }
+}
+
+
+function editCustomCompanyId(
+    companyId,
+    companyName
+) {
+
+    const idInput =
+        document.getElementById(
+            "custom-company-id"
+        );
+
+    const nameInput =
+        document.getElementById(
+            "custom-company-name"
+        );
+
+    if (!idInput || !nameInput) {
+        return;
+    }
+
+    idInput.value =
+        companyId;
+
+    nameInput.value =
+        companyName;
+
+    idInput.focus();
+
+    showCustomCompanyMessage(
+        "Edit the name and press Add / Save.",
+        true
+    );
+
+    window.scrollTo({
+        top: idInput.getBoundingClientRect().top
+            + window.scrollY
+            - 100,
+        behavior: "smooth"
+    });
+}
+
+
+async function deleteCustomCompanyId(
+    companyId
+) {
+
+    if (
+        !window.confirm(
+            "Delete custom Company ID " +
+            companyId +
+            "?"
+        )
+    ) {
+        return;
+    }
+
+    showCustomCompanyMessage(
+        "Deleting...",
+        true
+    );
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/settings/custom-company-ids/"
+                +
+                encodeURIComponent(
+                    companyId
+                ),
+                {
+                    method: "DELETE"
+                }
+            );
+
+        const result =
+            await response.json();
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Unable to delete Company ID."
+            );
+
+        }
+
+        showCustomCompanyMessage(
+            "Custom Company ID deleted.",
+            true
+        );
+
+        renderCustomCompanyIds(
+            result.custom_company_ids || []
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Custom Company ID delete failed:",
+            error
+        );
+
+        showCustomCompanyMessage(
+            "Delete failed: " +
+            error.message,
+            false
+        );
+    }
+}
+
+
+function renderCustomCompanyIds(
+    companies
+) {
+
+    const list =
+        document.getElementById(
+            "custom-company-list"
+        );
+
+    if (!list) {
+        return;
+    }
+
+    if (!companies.length) {
+
+        list.innerHTML =
+            `
+            <p
+                id="custom-company-empty"
+                class="settings-intro"
+            >
+                No custom Company IDs configured.
+            </p>
+            `;
+
+        return;
+    }
+
+    list.innerHTML =
+        companies.map(
+            function (company) {
+
+                const safeName =
+                    JSON.stringify(
+                        company.company_name
+                    );
+
+                return `
+                    <div
+                        class="database-card custom-company-card"
+                        data-company-id="${company.company_id}"
+                    >
+
+                        <div
+                            style="display:flex; justify-content:space-between; align-items:center; gap:20px; flex-wrap:wrap;"
+                        >
+
+                            <div>
+
+                                <strong>
+                                    Company ID
+                                    ${company.company_id}
+                                </strong>
+
+                                <div
+                                    style="margin-top:5px;"
+                                >
+                                    ${escapeHtml(
+                                        company.company_name
+                                    )}
+                                </div>
+
+                            </div>
+
+                            <div
+                                style="display:flex; gap:10px; align-items:center;"
+                            >
+
+                                <button
+                                    type="button"
+                                    class="refresh-button"
+                                    onclick='editCustomCompanyId(
+                                        ${company.company_id},
+                                        ${safeName}
+                                    )'
+                                >
+                                    Edit
+                                </button>
+
+                                <button
+                                    type="button"
+                                    class="refresh-button"
+                                    onclick="deleteCustomCompanyId(
+                                        ${company.company_id}
+                                    )"
+                                >
+                                    Delete
+                                </button>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+                `;
+            }
+        ).join("");
+}
+
+
+function escapeHtml(
+    value
+) {
+
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
 

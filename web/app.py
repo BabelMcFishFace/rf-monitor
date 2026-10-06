@@ -434,6 +434,22 @@ def ensure_database_schema(db):
     """)
 
     # -----------------------------------------------------------------------
+    # Custom Bluetooth Company IDs
+    #
+    # These are user-defined overrides/fallbacks.  They are only used when
+    # the official Bluetooth Company ID database does not contain the ID.
+    # -----------------------------------------------------------------------
+
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS custom_company_ids (
+            company_id INTEGER PRIMARY KEY,
+            company_name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # -----------------------------------------------------------------------
     # Indexes
     # -----------------------------------------------------------------------
 
@@ -1442,6 +1458,246 @@ def set_bluetooth_adapter(value):
 
 
 # ===========================================================================
+# Custom Bluetooth Company IDs
+# ===========================================================================
+
+def get_custom_company_ids():
+    """
+    Return all user-defined Company ID mappings.
+    """
+
+    db = get_db()
+
+    try:
+
+        ensure_database_schema(db)
+
+        rows = db.execute("""
+            SELECT
+                company_id,
+                company_name,
+                created_at,
+                updated_at
+            FROM custom_company_ids
+            ORDER BY company_id
+        """).fetchall()
+
+        return [
+            {
+                "company_id": int(row["company_id"]),
+                "company_name": row["company_name"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    finally:
+
+        db.close()
+
+
+@app.route(
+    "/api/settings/custom-company-ids",
+    methods=["GET"],
+)
+def api_custom_company_ids():
+
+    try:
+
+        return jsonify({
+            "success": True,
+            "custom_company_ids": get_custom_company_ids(),
+        })
+
+    except Exception as exc:
+
+        app.logger.exception(
+            "Unable to obtain custom Company IDs"
+        )
+
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 500
+
+
+@app.route(
+    "/api/settings/custom-company-ids",
+    methods=["POST"],
+)
+def api_add_custom_company_id():
+
+    payload = request.get_json(
+        silent=True
+    )
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    raw_id = payload.get("company_id")
+    company_name = str(
+        payload.get("company_name") or ""
+    ).strip()
+
+    try:
+
+        company_id = int(
+            str(raw_id).strip()
+        )
+
+    except (TypeError, ValueError):
+
+        return jsonify({
+            "success": False,
+            "error": "Company ID must be a number.",
+        }), 400
+
+    if company_id < 0 or company_id > 65535:
+
+        return jsonify({
+            "success": False,
+            "error": "Company ID must be between 0 and 65535.",
+        }), 400
+
+    if not company_name:
+
+        return jsonify({
+            "success": False,
+            "error": "Company name is required.",
+        }), 400
+
+    if len(company_name) > 200:
+
+        return jsonify({
+            "success": False,
+            "error": "Company name is too long.",
+        }), 400
+
+    db = get_db()
+
+    try:
+
+        ensure_database_schema(db)
+
+        existing = db.execute("""
+            SELECT company_id
+            FROM custom_company_ids
+            WHERE company_id = ?
+        """, (company_id,)).fetchone()
+
+        if existing is not None:
+
+            db.execute("""
+                UPDATE custom_company_ids
+                SET
+                    company_name = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE company_id = ?
+            """, (
+                company_name,
+                company_id,
+            ))
+
+            action = "updated"
+
+        else:
+
+            db.execute("""
+                INSERT INTO custom_company_ids (
+                    company_id,
+                    company_name
+                )
+                VALUES (
+                    ?,
+                    ?
+                )
+            """, (
+                company_id,
+                company_name,
+            ))
+
+            action = "added"
+
+        db.commit()
+
+        return jsonify({
+            "success": True,
+            "action": action,
+            "company_id": company_id,
+            "company_name": company_name,
+            "custom_company_ids": get_custom_company_ids(),
+        })
+
+    except Exception as exc:
+
+        db.rollback()
+
+        app.logger.exception(
+            "Unable to save custom Company ID"
+        )
+
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 500
+
+    finally:
+
+        db.close()
+
+
+@app.route(
+    "/api/settings/custom-company-ids/<int:company_id>",
+    methods=["DELETE"],
+)
+def api_delete_custom_company_id(company_id):
+
+    db = get_db()
+
+    try:
+
+        ensure_database_schema(db)
+
+        cursor = db.execute("""
+            DELETE FROM custom_company_ids
+            WHERE company_id = ?
+        """, (company_id,))
+
+        db.commit()
+
+        if cursor.rowcount == 0:
+
+            return jsonify({
+                "success": False,
+                "error": "Custom Company ID not found.",
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "company_id": company_id,
+            "custom_company_ids": get_custom_company_ids(),
+        })
+
+    except Exception as exc:
+
+        db.rollback()
+
+        app.logger.exception(
+            "Unable to delete custom Company ID"
+        )
+
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+        }), 500
+
+    finally:
+
+        db.close()
+
+
+# ===========================================================================
 # Settings
 # ===========================================================================
 
@@ -1452,10 +1708,13 @@ def settings():
 
     bluetooth_adapter = get_bluetooth_adapter()
 
+    custom_company_ids = get_custom_company_ids()
+
     return render_template(
         "settings.html",
         databases=databases,
         bluetooth_adapter=bluetooth_adapter,
+        custom_company_ids=custom_company_ids,
     )
 
 
