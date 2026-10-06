@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>
+        {{ device['name'] or 'Unnamed BLE Device' }}
+        - RF Monitor
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}?v=2"
+    >
+
+</head>
+
+
+<body>
+
+
+<header>
+
+    <h1>
+        {{ device['name'] or '(unnamed BLE device)' }}
+    </h1>
+
+    <div class="subtitle mono">
+        {{ device['address'] }}
+    </div>
+
+</header>
+
+
+<main>
+
+
+    <p>
+
+        <a href="/">
+            ← Back to devices
+        </a>
+
+    </p>
+
+
+    <!-- ==========================================================
+         Device actions
+         ========================================================== -->
+
+    <section class="panel">
+
+        <h2>
+            Device Actions
+        </h2>
+
+        <p>
+            Deleting this device will permanently remove the device
+            record, all recorded sightings, and all stored fingerprints
+            for this MAC address.
+        </p>
+
+        <form
+            method="POST"
+            action="{{ url_for('device_delete', address=device['address']) }}"
+            onsubmit="return confirm(
+                'DELETE this device and ALL of its sightings and fingerprints? This cannot be undone.'
+            );"
+        >
+
+            <button
+                type="submit"
+                style="
+                    background: #b42318;
+                    color: white;
+                    border: 0;
+                    padding: 10px 16px;
+                    border-radius: 5px;
+                    cursor: pointer;
+                    font-weight: 600;
+                "
+            >
+                Delete Device &amp; All Sightings
+            </button>
+
+        </form>
+
+    </section>
+
+
+    <!-- ==========================================================
+         Manufacturer
+         ========================================================== -->
+
+    <section class="panel">
+
+        <h2>
+            Manufacturer
+        </h2>
+
+
+        {% if manufacturers %}
+
+            {% for manufacturer in manufacturers %}
+
+                <div class="manufacturer-card">
+
+                    <div>
+
+                        <strong>
+                            Manufacturer
+                        </strong>
+
+                        {% if manufacturer['name'] %}
+
+                            <span class="manufacturer-name">
+                                {{ manufacturer['name'] }}
+                            </span>
+
+                        {% else %}
+
+                            <span class="unknown">
+                                Unknown manufacturer
+                            </span>
+
+                        {% endif %}
+
+                    </div>
+
+
+                    <div>
+
+                        <strong>
+                            Bluetooth Company ID
+                        </strong>
+
+                        <span class="mono">
+                            {{ manufacturer['id'] }}
+                        </span>
+
+                    </div>
+
+
+                    {% if manufacturer['source'] %}
+
+                        <div>
+
+                            <strong>
+                                Lookup source
+                            </strong>
+
+                            <span>
+                                {{ manufacturer['source'] }}
+                            </span>
+
+                        </div>
+
+                    {% endif %}
+
+                </div>
+
+            {% endfor %}
+
+        {% else %}
+
+            <p>
+                No manufacturer data was present in the latest
+                BLE advertisement.
+            </p>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ==========================================================
+         Identification
+         ========================================================== -->
+
+    <section class="panel">
+
+        <h2>
+            Identification
+        </h2>
+
+
+        {% if matches %}
+
+            {% for match in matches %}
+
+                <div class="match">
+
+                    <h3>
+                        {{ match['name'] }}
+                    </h3>
+
+
+                    <div>
+
+                        <strong>
+                            Type:
+                        </strong>
+
+                        {{ match['device_type'] }}
+
+                    </div>
+
+
+                    <div>
+
+                        <strong>
+                            Confidence:
+                        </strong>
+
+                        {{ match['confidence'] }}%
+
+                    </div>
+
+
+                    {% if match['description'] %}
+
+                        <p>
+                            {{ match['description'] }}
+                        </p>
+
+                    {% endif %}
+
+
+                    <h4>
+                        Evidence
+                    </h4>
+
+
+                    <ul>
+
+                    {% for evidence in match['evidence'] %}
+
+                        <li>
+                            <span class="mono">
+                                {{ evidence }}
+                            </span>
+                        </li>
+
+                    {% endfor %}
+
+                    </ul>
+
+                </div>
+
+            {% endfor %}
+
+        {% else %}
+
+            <p>
+                <strong>Unknown device.</strong>
+            </p>
+
+            <p>
+                No enabled signature matched the latest BLE
+                advertisement for this device.
+            </p>
+
+        {% endif %}
+
+    </section>
+
+
+    <!-- ==========================================================
+         Device statistics
+         ========================================================== -->
+
+    <section class="panel">
+
+        <h2>
+            Device
+        </h2>
+
+
+        <div class="details">
+
+
+            <div>
+
+                <strong>
+                    MAC Address
+                </strong>
+
+                <span class="mono">
+                    {{ device['address'] }}
+                </span>
+
+            </div>
+
+
+            <div>
+
+                <strong>
+                    Last RSSI
+                </strong>
+
+                <span>
+                    {{ device['last_rssi'] }} dBm
+                </span>
+
+            </div>
+
+
+            <div>
+
+                <strong>
+                    Average RSSI
+                </strong>
+
+                <span>
+
+                    {% if device['avg_rssi'] is not none %}
+
+                        {{ "%.1f"|format(
+                            device['avg_rssi']
+                        ) }} dBm
+
+                    {% else %}
+
+                        --
+
+                    {% endif %}
+
+                </span>
+
+            </div>
+
+
+            <div>
+
+                <strong>
+                    RSSI Range
+                </strong>
+
+                <span>
+
+                    {% if device['min_rssi'] is not none %}
+
+                        {{ device['min_rssi'] }}
+                        →
+                        {{ device['max_rssi'] }}
+                        dBm
+
+                    {% else %}
+
+                        --
+
+                    {% endif %}
+
+                </span>
+
+            </div>
+
+
+            <div>
+
+                <strong>
+                    Sightings
+                </strong>
+
+                <span>
+                    {{ device['sightings'] }}
+                </span>
+
+            </div>
+
+
+            <div>
+
+                <strong>
+                    First Seen
+                </strong>
+
+                <span>
+                    {{ device['first_seen'] }}
+                </span>
+
+            </div>
+
+
+            <div>
+
+                <strong>
+                    Last Seen
+                </strong>
+
+                <span>
+                    {{ device['last_seen'] }}
+                </span>
+
+            </div>
+
+
+        </div>
+
+    </section>
+
+
+    <!-- ==========================================================
+         Fingerprints
+         ========================================================== -->
+
+    <section class="panel">
+
+        <h2>
+
+            Fingerprints
+
+            <span class="count">
+                {{ fingerprints|length }}
+            </span>
+
+        </h2>
+
+
+        {% for fp in fingerprints %}
+
+            <div class="fingerprint">
+
+                <h3>
+                    Fingerprint {{ loop.index }}
+                </h3>
+
+
+                <div class="mono fingerprint-hash">
+                    {{ fp['fingerprint'] }}
+                </div>
+
+
+                <div class="fingerprint-grid">
+
+
+                    <div>
+
+                        <strong>
+                            First seen
+                        </strong>
+
+                        <span>
+                            {{ fp['first_seen'] }}
+                        </span>
+
+                    </div>
+
+
+                    <div>
+
+                        <strong>
+                            Last seen
+                        </strong>
+
+                        <span>
+                            {{ fp['last_seen'] }}
+                        </span>
+
+                    </div>
+
+
+                    <div>
+
+                        <strong>
+                            Sightings
+                        </strong>
+
+                        <span>
+                            {{ fp['sightings'] }}
+                        </span>
+
+                    </div>
+
+
+                    <div>
+
+                        <strong>
+                            TX Power
+                        </strong>
+
+                        <span>
+                            {{
+                                fp['tx_power']
+                                if fp['tx_power'] is not none
+                                else '--'
+                            }}
+                        </span>
+
+                    </div>
+
+
+                </div>
+
+
+                <h4>
+                    Service UUIDs
+                </h4>
+
+                <pre>{{ fp['service_uuids'] }}</pre>
+
+
+                <h4>
+                    Manufacturer Data
+                </h4>
+
+                <pre>{{ fp['manufacturer_data'] }}</pre>
+
+
+                <h4>
+                    Service Data
+                </h4>
+
+                <pre>{{ fp['service_data'] }}</pre>
+
+
+            </div>
+
+        {% else %}
+
+            <p>
+                No fingerprints recorded.
+            </p>
+
+        {% endfor %}
+
+    </section>
+
+
+    <!-- ==========================================================
+         Recent RSSI
+         ========================================================== -->
+
+    <section class="panel">
+
+        <h2>
+            Recent RSSI
+        </h2>
+
+
+        <table>
+
+            <thead>
+
+                <tr>
+
+                    <th>
+                        Time
+                    </th>
+
+                    <th>
+                        RSSI
+                    </th>
+
+                    <th>
+                        Name
+                    </th>
+
+                </tr>
+
+            </thead>
+
+
+            <tbody>
+
+            {% for observation in observations %}
+
+                <tr>
+
+                    <td class="timestamp">
+                        {{ observation['timestamp'] }}
+                    </td>
+
+
+                    <td>
+                        {{ observation['rssi'] }} dBm
+                    </td>
+
+
+                    <td>
+                        {{ observation['name'] or '(unnamed)' }}
+                    </td>
+
+                </tr>
+
+            {% endfor %}
+
+            </tbody>
+
+        </table>
+
+    </section>
+
+
+</main>
+
+
+</body>
+
+</html>

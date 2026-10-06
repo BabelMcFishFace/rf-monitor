@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>
+        Settings - RF Monitor
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+
+</head>
+
+
+<body>
+
+
+<header>
+
+    <div class="header-content">
+
+        <div>
+
+            <h1>
+                RF Monitor
+            </h1>
+
+            <div class="subtitle">
+                Settings / Offline databases
+            </div>
+
+        </div>
+
+
+        <a
+            href="/"
+            class="settings-button"
+        >
+            ← Devices
+        </a>
+
+    </div>
+
+</header>
+
+
+<main>
+
+
+    <p>
+
+        <a href="/">
+            ← Back to devices
+        </a>
+
+    </p>
+
+
+    <section class="panel">
+
+
+        <div class="panel-header">
+
+            <div>
+
+                <h2>
+                    Offline Lookup Databases
+                </h2>
+
+                <p class="settings-intro">
+
+                    These databases are stored locally on
+                    the Raspberry Pi.
+
+                    RF Monitor can continue to identify
+                    manufacturers without internet access.
+
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div id="database-list">
+
+
+        {% for database in databases %}
+
+
+            <div
+                class="database-card"
+                data-database-id="{{ database['id'] }}"
+            >
+
+
+                <div class="database-header">
+
+
+                    <div>
+
+                        <h3>
+                            {{ database['name'] }}
+                        </h3>
+
+
+                        <p class="database-description">
+
+                            {{ database['description'] }}
+
+                        </p>
+
+                    </div>
+
+
+                    <div class="database-status">
+
+
+                        {% if database['exists'] %}
+
+                            <span class="status-good">
+                                Available offline
+                            </span>
+
+                        {% else %}
+
+                            <span class="status-bad">
+                                Not downloaded
+                            </span>
+
+                        {% endif %}
+
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="database-details">
+
+
+                    <div class="database-detail-tile">
+
+                        <label>
+                            Local file
+                        </label>
+
+                        <span class="mono database-path">
+
+                            {{ database['path'] }}
+
+                        </span>
+
+                    </div>
+
+
+                    <div class="database-detail-tile">
+
+                        <label>
+                            File size
+                        </label>
+
+                        <span class="database-size">
+
+                            {% if database['exists'] %}
+
+                                {{ "%.1f"|format(
+                                    database['size'] / 1024
+                                ) }}
+
+                                KB
+
+                            {% else %}
+
+                                --
+
+                            {% endif %}
+
+                        </span>
+
+                    </div>
+
+
+                    <div class="database-detail-tile">
+
+                        <label>
+                            Last updated
+                        </label>
+
+                        <span
+                            class="database-modified"
+                            data-modified="{{ database['modified'] or '' }}"
+                        >
+
+                            {% if database['modified'] %}
+
+                                {{ database['modified'] }}
+
+                            {% else %}
+
+                                Never
+
+                            {% endif %}
+
+                        </span>
+
+                    </div>
+
+
+                </div>
+
+
+                <div class="database-url">
+
+
+                    <label>
+                        Download URL
+                    </label>
+
+
+                    <input
+                        type="url"
+                        class="database-url-input"
+                        value="{{ database['url'] }}"
+                        spellcheck="false"
+                    >
+
+
+                </div>
+
+
+                <div class="database-actions">
+
+
+                    <button
+                        type="button"
+                        class="refresh-button update-database-button"
+                        onclick="updateDatabase(
+                            '{{ database['id'] }}',
+                            this
+                        )"
+                    >
+
+                        Download / Update
+
+                    </button>
+
+
+                    <span
+                        class="database-message"
+                    ></span>
+
+
+                </div>
+
+
+            </div>
+
+
+        {% endfor %}
+
+
+        </div>
+
+
+    </section>
+
+
+    <section class="panel">
+
+
+        <h2>
+            How offline lookup works
+        </h2>
+
+
+        <ol>
+
+            <li>
+                RF Monitor checks the local databases first.
+            </li>
+
+            <li>
+                The captured MAC address can be checked against
+                the local IEEE databases.
+            </li>
+
+            <li>
+                Bluetooth manufacturer/company IDs can be checked
+                against the local Company ID database.
+            </li>
+
+            <li>
+                Internet access is only required when an online
+                fallback is explicitly used.
+            </li>
+
+            <li>
+                Updating these files does not require restarting
+                the BLE collector.
+            </li>
+
+        </ol>
+
+
+    </section>
+
+
+</main>
+
+
+<script>
+
+
+function formatSize(bytes) {
+
+    if (!bytes) {
+        return "--";
+    }
+
+
+    if (bytes < 1024) {
+
+        return (
+            bytes +
+            " B"
+        );
+
+    }
+
+
+    if (
+        bytes <
+        1024 * 1024
+    ) {
+
+        return (
+            (bytes / 1024)
+                .toFixed(1)
+            +
+            " KB"
+        );
+
+    }
+
+
+    return (
+        (bytes / (1024 * 1024))
+            .toFixed(1)
+        +
+        " MB"
+    );
+}
+
+
+function formatModified(timestamp) {
+
+    if (
+        timestamp === null ||
+        timestamp === undefined ||
+        timestamp === ""
+    ) {
+
+        return "Never";
+    }
+
+
+    const date =
+        new Date(
+            Number(timestamp) * 1000
+        );
+
+
+    if (
+        Number.isNaN(
+            date.getTime()
+        )
+    ) {
+
+        return "Unknown";
+    }
+
+
+    return date.toLocaleString(
+        undefined,
+        {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+        }
+    );
+}
+
+
+function updateModifiedDate(
+    card,
+    timestamp
+) {
+
+    const element =
+        card.querySelector(
+            ".database-modified"
+        );
+
+
+    if (!element) {
+        return;
+    }
+
+
+    element.textContent =
+        formatModified(
+            timestamp
+        );
+
+
+    element.dataset.modified =
+        timestamp ?? "";
+}
+
+
+function updateCardStatus(
+    card,
+    database
+) {
+
+    const status =
+        card.querySelector(
+            ".database-status"
+        );
+
+
+    if (status) {
+
+        if (database.exists) {
+
+            status.innerHTML =
+                `
+                <span class="status-good">
+                    Available offline
+                </span>
+                `;
+
+        } else {
+
+            status.innerHTML =
+                `
+                <span class="status-bad">
+                    Not downloaded
+                </span>
+                `;
+
+        }
+
+    }
+
+
+    const size =
+        card.querySelector(
+            ".database-size"
+        );
+
+
+    if (size) {
+
+        size.textContent =
+            database.exists
+                ? formatSize(
+                    database.size
+                )
+                : "--";
+
+    }
+
+
+    updateModifiedDate(
+        card,
+        database.modified
+    );
+
+}
+
+
+async function updateDatabase(
+    databaseId,
+    button
+) {
+
+    const card =
+        document.querySelector(
+            '[data-database-id="' +
+            databaseId +
+            '"]'
+        );
+
+
+    if (!card) {
+        return;
+    }
+
+
+    const urlInput =
+        card.querySelector(
+            ".database-url-input"
+        );
+
+
+    const message =
+        card.querySelector(
+            ".database-message"
+        );
+
+
+    const url =
+        urlInput.value.trim();
+
+
+    if (!url) {
+
+        message.textContent =
+            "Please enter a URL.";
+
+        message.className =
+            "database-message error";
+
+        return;
+    }
+
+
+    button.disabled = true;
+
+    button.textContent =
+        "Downloading...";
+
+
+    message.textContent =
+        "Contacting server...";
+
+    message.className =
+        "database-message";
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/settings/database/"
+                +
+                encodeURIComponent(
+                    databaseId
+                )
+                +
+                "/update",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        url: url
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Download failed."
+            );
+
+        }
+
+
+        message.textContent =
+            "Updated successfully.";
+
+        message.className =
+            "database-message success";
+
+
+        const database =
+            result.database;
+
+
+        updateCardStatus(
+            card,
+            database
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Database update failed:",
+            error
+        );
+
+
+        message.textContent =
+            "Update failed: " +
+            error.message;
+
+        message.className =
+            "database-message error";
+
+
+    } finally {
+
+        button.disabled = false;
+
+        button.textContent =
+            "Download / Update";
+
+    }
+
+}
+
+
+document.addEventListener(
+    "DOMContentLoaded",
+    function () {
+
+        document
+            .querySelectorAll(
+                ".database-modified"
+            )
+            .forEach(
+                function (element) {
+
+                    const timestamp =
+                        element.dataset.modified;
+
+
+                    if (timestamp) {
+
+                        element.textContent =
+                            formatModified(
+                                timestamp
+                            );
+
+                    }
+
+                }
+            );
+
+    }
+);
+
+
+</script>
+
+
+</body>
+
+</html>

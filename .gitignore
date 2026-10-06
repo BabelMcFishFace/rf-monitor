@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+*.db-journal
+*.log
+
+old/
+web/old/
+web/static/old/
+web/templates/old/
+
+# Local runtime database
+rf_monitor.db
+
+# Historical project snapshots
+*.before-*.py
+*.before-*.css
+
+# Downloaded manufacturer/OUI databases
+data/

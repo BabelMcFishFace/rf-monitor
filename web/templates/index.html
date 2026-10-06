@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <title>RF Monitor</title>
+
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='style.css') }}"
+    >
+
+</head>
+
+<body>
+
+<header>
+
+    <div class="header-content">
+
+        <div>
+
+            <h1>RF Monitor</h1>
+
+            <div class="subtitle">
+                Bluetooth Low Energy environment
+            </div>
+
+        </div>
+
+
+        <div class="header-actions">
+
+            <span
+                id="collector-status"
+                class="collector-status collector-stopped"
+            >
+                ● Collector stopped
+            </span>
+
+
+            <button
+                id="start-collector-button"
+                class="collector-start-button"
+                onclick="startCollector()"
+            >
+                ▶ Start Collector
+            </button>
+
+
+            <button
+                id="stop-collector-button"
+                class="collector-stop-button"
+                onclick="stopCollector()"
+                disabled
+            >
+                ■ Stop Collector
+            </button>
+
+
+            <a
+                href="/settings"
+                class="settings-button"
+            >
+                ⚙ Settings
+            </a>
+
+        </div>
+
+    </div>
+
+</header>
+
+
+<main>
+
+    <section class="summary">
+
+        <div class="stat">
+
+            <span class="stat-label">
+                Devices
+            </span>
+
+            <span
+                id="device-count"
+                class="stat-value"
+            >
+                {{ devices|length }}
+            </span>
+
+        </div>
+
+
+        <div class="stat">
+
+            <span class="stat-label">
+                Last update
+            </span>
+
+            <span
+                id="last-update"
+                class="stat-value"
+            >
+                --
+            </span>
+
+        </div>
+
+    </section>
+
+
+    <section class="panel">
+
+        <div class="panel-header">
+
+            <h2>
+                BLE Devices
+            </h2>
+
+            <button
+                onclick="loadDevices()"
+                class="refresh-button"
+            >
+                Refresh
+            </button>
+
+        </div>
+
+
+        <div class="table-container">
+
+            <table>
+
+                <thead>
+
+                    <tr>
+
+                        <th>Device</th>
+
+                        <th>Manufacturer</th>
+
+                        <th>Identification</th>
+
+                        <th>Confidence</th>
+
+                        <th>MAC Address</th>
+
+                        <th>RSSI</th>
+
+                        <th>Average</th>
+
+                        <th>Range</th>
+
+                        <th>Sightings</th>
+
+                        <th>Fingerprints</th>
+
+                        <th>Last Seen</th>
+
+                    </tr>
+
+                </thead>
+
+
+                <tbody id="device-table">
+
+                {% for device in devices %}
+
+                    <tr>
+
+                        <td>
+
+                            <a
+                                href="{{ url_for(
+                                    'device_detail',
+                                    address=device['address']
+                                ) }}"
+                            >
+
+                                {{ device['name'] or '(unnamed)' }}
+
+                            </a>
+
+                        </td>
+
+
+                        <td>
+
+                            {% if device['manufacturers'] %}
+
+                                {% for manufacturer in device['manufacturers'] %}
+
+                                    {% if manufacturer['name'] %}
+
+                                        <strong>
+                                            {{ manufacturer['name'] }}
+                                        </strong>
+
+                                    {% else %}
+
+                                        <span class="unknown">
+                                            Unknown manufacturer
+                                        </span>
+
+                                    {% endif %}
+
+                                    <br>
+
+                                    <small class="mono">
+                                        ID {{ manufacturer['id'] }}
+                                    </small>
+
+                                    {% if not loop.last %}
+                                        <br><br>
+                                    {% endif %}
+
+                                {% endfor %}
+
+                            {% else %}
+
+                                <span class="unknown">
+                                    None
+                                </span>
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td>
+
+                            {% if device['identified_as'] %}
+
+                                <strong>
+                                    {{ device['identified_as'] }}
+                                </strong>
+
+                                <br>
+
+                                <small>
+                                    {{ device['identified_type'] }}
+                                </small>
+
+                            {% else %}
+
+                                <span class="unknown">
+                                    Unknown
+                                </span>
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td>
+
+                            {% if device['confidence'] is not none %}
+
+                                <strong>
+                                    {{ device['confidence'] }}%
+                                </strong>
+
+                            {% else %}
+
+                                --
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td class="mono">
+                            {{ device['address'] }}
+                        </td>
+
+
+                        <td>
+
+                            <span class="rssi">
+                                {{ device['last_rssi'] }}
+                            </span>
+
+                            dBm
+
+                        </td>
+
+
+                        <td>
+
+                            {% if device['avg_rssi'] is not none %}
+
+                                {{ "%.1f"|format(
+                                    device['avg_rssi']
+                                ) }}
+
+                                dBm
+
+                            {% else %}
+
+                                --
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td>
+
+                            {% if device['min_rssi'] is not none %}
+
+                                {{ device['min_rssi'] }}
+                                →
+                                {{ device['max_rssi'] }}
+
+                            {% else %}
+
+                                --
+
+                            {% endif %}
+
+                        </td>
+
+
+                        <td>
+                            {{ device['sightings'] }}
+                        </td>
+
+
+                        <td>
+                            {{ device['fingerprint_count'] }}
+                        </td>
+
+
+                        <td class="timestamp">
+                            {{ device['last_seen'] }}
+                        </td>
+
+                    </tr>
+
+                {% endfor %}
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </section>
+
+</main>
+
+
+<script>
+
+function escapeHtml(value) {
+
+    const div =
+        document.createElement("div");
+
+    div.textContent =
+        value ?? "";
+
+    return div.innerHTML;
+}
+
+
+function manufacturerHtml(
+    manufacturers
+) {
+
+    if (
+        !manufacturers ||
+        manufacturers.length === 0
+    ) {
+
+        return `
+            <span class="unknown">
+                None
+            </span>
+        `;
+    }
+
+
+    let html = "";
+
+
+    for (
+        let i = 0;
+        i < manufacturers.length;
+        i++
+    ) {
+
+        const manufacturer =
+            manufacturers[i];
+
+
+        if (manufacturer.name) {
+
+            html += `
+                <strong>
+                    ${escapeHtml(
+                        manufacturer.name
+                    )}
+                </strong>
+            `;
+
+        } else {
+
+            html += `
+                <span class="unknown">
+                    Unknown manufacturer
+                </span>
+            `;
+        }
+
+
+        html += `
+            <br>
+
+            <small class="mono">
+                ID ${escapeHtml(
+                    String(
+                        manufacturer.id
+                    )
+                )}
+            </small>
+        `;
+
+
+        if (
+            i <
+            manufacturers.length - 1
+        ) {
+
+            html += "<br><br>";
+        }
+
+    }
+
+
+    return html;
+}
+
+
+function updateCollectorControls(
+    status
+) {
+
+    const statusElement =
+        document.getElementById(
+            "collector-status"
+        );
+
+    const startButton =
+        document.getElementById(
+            "start-collector-button"
+        );
+
+    const stopButton =
+        document.getElementById(
+            "stop-collector-button"
+        );
+
+
+    if (status && status.running) {
+
+        statusElement.textContent =
+            "● Collector running" +
+            (
+                status.pid
+                    ? " (PID " + status.pid + ")"
+                    : ""
+            );
+
+        statusElement.className =
+            "collector-status collector-running";
+
+        startButton.disabled =
+            true;
+
+        stopButton.disabled =
+            false;
+
+    } else {
+
+        statusElement.textContent =
+            "● Collector stopped";
+
+        statusElement.className =
+            "collector-status collector-stopped";
+
+        startButton.disabled =
+            false;
+
+        stopButton.disabled =
+            true;
+
+    }
+
+}
+
+
+async function loadCollectorStatus() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/collector/status"
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+        }
+
+
+        const status =
+            await response.json();
+
+
+        updateCollectorControls(
+            status
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Unable to obtain collector status:",
+            error
+        );
+
+    }
+
+}
+
+
+async function startCollector() {
+
+    const button =
+        document.getElementById(
+            "start-collector-button"
+        );
+
+
+    button.disabled =
+        true;
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/collector/start",
+                {
+                    method: "POST"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                result.error ||
+                "Unable to start collector"
+            );
+        }
+
+
+        updateCollectorControls(
+            result
+        );
+
+
+        await loadDevices();
+
+    } catch (error) {
+
+        console.error(
+            "Unable to start collector:",
+            error
+        );
+
+        alert(
+            "Unable to start collector:\n\n" +
+            error.message
+        );
+
+        await loadCollectorStatus();
+
+    }
+
+}
+
+
+async function stopCollector() {
+
+    const button =
+        document.getElementById(
+            "stop-collector-button"
+        );
+
+
+    button.disabled =
+        true;
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/collector/stop",
+                {
+                    method: "POST"
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                result.error ||
+                "Unable to stop collector"
+            );
+        }
+
+
+        updateCollectorControls(
+            result
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Unable to stop collector:",
+            error
+        );
+
+        alert(
+            "Unable to stop collector:\n\n" +
+            error.message
+        );
+
+        await loadCollectorStatus();
+
+    }
+
+}
+
+
+async function loadDevices() {
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/devices"
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                "HTTP " +
+                response.status
+            );
+        }
+
+
+        const devices =
+            await response.json();
+
+
+        const table =
+            document.getElementById(
+                "device-table"
+            );
+
+
+        table.innerHTML = "";
+
+
+        for (
+            const device
+            of devices
+        ) {
+
+            const row =
+                document.createElement(
+                    "tr"
+                );
+
+
+            const average =
+                device.avg_rssi !== null
+                    ? Number(
+                        device.avg_rssi
+                    ).toFixed(1)
+                    : "--";
+
+
+            const range =
+                device.min_rssi !== null
+                    ? `${device.min_rssi} → ${device.max_rssi}`
+                    : "--";
+
+
+            let identification = `
+                <span class="unknown">
+                    Unknown
+                </span>
+            `;
+
+
+            if (
+                device.identified_as
+            ) {
+
+                identification = `
+                    <strong>
+                        ${escapeHtml(
+                            device.identified_as
+                        )}
+                    </strong>
+
+                    <br>
+
+                    <small>
+                        ${escapeHtml(
+                            device.identified_type ||
+                            ""
+                        )}
+                    </small>
+                `;
+            }
+
+
+            const confidence =
+                device.confidence !== null
+                    ? `
+                        <strong>
+                            ${device.confidence}%
+                        </strong>
+                    `
+                    : "--";
+
+
+            row.innerHTML = `
+
+                <td>
+
+                    <a
+                        href="/device/${encodeURIComponent(
+                            device.address
+                        )}"
+                    >
+
+                        ${escapeHtml(
+                            device.name ||
+                            "(unnamed)"
+                        )}
+
+                    </a>
+
+                </td>
+
+
+                <td>
+
+                    ${manufacturerHtml(
+                        device.manufacturers
+                    )}
+
+                </td>
+
+
+                <td>
+
+                    ${identification}
+
+                </td>
+
+
+                <td>
+
+                    ${confidence}
+
+                </td>
+
+
+                <td class="mono">
+
+                    ${escapeHtml(
+                        device.address
+                    )}
+
+                </td>
+
+
+                <td>
+
+                    <span class="rssi">
+
+                        ${device.last_rssi ?? "--"}
+
+                    </span>
+
+                    dBm
+
+                </td>
+
+
+                <td>
+
+                    ${average} dBm
+
+                </td>
+
+
+                <td>
+
+                    ${range}
+
+                </td>
+
+
+                <td>
+
+                    ${device.sightings}
+
+                </td>
+
+
+                <td>
+
+                    ${device.fingerprint_count}
+
+                </td>
+
+
+                <td class="timestamp">
+
+                    ${escapeHtml(
+                        device.last_seen
+                    )}
+
+                </td>
+
+            `;
+
+
+            table.appendChild(
+                row
+            );
+
+        }
+
+
+        document.getElementById(
+            "device-count"
+        ).textContent =
+            devices.length;
+
+
+        document.getElementById(
+            "last-update"
+        ).textContent =
+            new Date()
+                .toLocaleTimeString();
+
+
+    } catch (error) {
+
+        console.error(
+            "Unable to update device list:",
+            error
+        );
+
+    }
+
+}
+
+
+loadCollectorStatus();
+
+setInterval(
+    loadCollectorStatus,
+    2000
+);
+
+setInterval(
+    loadDevices,
+    5000
+);
+
+</script>
+
+
+</body>
+
+</html>
