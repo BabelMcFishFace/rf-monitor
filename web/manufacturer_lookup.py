@@ -465,7 +465,7 @@ def identify_manufacturer(
                 "id": manufacturer_id,
                 "name": name,
                 "source": (
-                    "Local Bluetooth Company Database"
+                    "Local Bluetooth Company ID database"
                 ),
             }
 
