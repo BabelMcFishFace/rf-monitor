@@ -308,22 +308,6 @@ Run:
 
     git diff --stat
 
-Do not commit the backup files unless specifically required.
-
-Recommended files to commit:
-
-    web/app.py
-    web/manufacturer_lookup.py
-    web/templates/settings.html
-    DEVELOPMENT_NOTES.md
-
-Suggested commit:
-
-    git add web/app.py web/manufacturer_lookup.py web/templates/settings.html DEVELOPMENT_NOTES.md
-
-    git commit -m "Add custom Bluetooth Company ID mappings"
-
-    git push origin main
 
 ---
 
