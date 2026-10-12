@@ -61,6 +61,41 @@ DATABASES = {
             "oui28/mam.csv"
         ),
     },
+    "gatt_services": {
+        "name": "Bluetooth GATT Services",
+        "description": "Offline Bluetooth GATT service UUID names.",
+        "path": DATA_DIR / "service_uuids.json",
+        "url": (
+            "https://raw.githubusercontent.com/"
+            "nordicsemi/bluetooth-numbers-database/"
+            "master/v1/service_uuids.json"
+        ),
+    },
+
+    "gatt_characteristics": {
+        "name": "Bluetooth GATT Characteristics",
+        "description": "Offline Bluetooth GATT characteristic UUID names.",
+        "path": DATA_DIR / "characteristic_uuids.json",
+        "url": (
+            "https://raw.githubusercontent.com/"
+            "nordicsemi/bluetooth-numbers-database/"
+            "master/v1/characteristic_uuids.json"
+        ),
+    },
+
+    "gatt_descriptors": {
+        "name": "Bluetooth GATT Descriptors",
+        "description": "Offline Bluetooth GATT descriptor UUID names.",
+        "path": DATA_DIR / "descriptor_uuids.json",
+        "url": (
+            "https://raw.githubusercontent.com/"
+            "nordicsemi/bluetooth-numbers-database/"
+            "master/v1/descriptor_uuids.json"
+        ),
+    },
+
+
+
 }
 
 
@@ -238,34 +273,68 @@ def validate_csv_database(path):
 
     return True
 
+def validate_gatt_database(path):
+    """
+    Validate a Nordic Bluetooth GATT UUID JSON database.
+    """
+
+    with path.open("r", encoding="utf-8") as file:
+        data = json.load(file)
+
+    if not isinstance(data, list) or not data:
+        raise ValueError(
+            "GATT UUID database must be a non-empty JSON list."
+        )
+
+    valid_entries = 0
+
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+
+        identifier = (
+            entry.get("identifier")
+            or entry.get("uuid")
+        )
+
+        name = entry.get("name")
+
+        if identifier and name:
+            valid_entries += 1
+
+    if valid_entries == 0:
+        raise ValueError(
+            "GATT UUID database contains no valid entries."
+        )
+
+    return valid_entries
+
 
 def validate_download(database_id, path):
-    """
-    Validate a downloaded database.
-    """
+    """Validate a downloaded database."""
 
     if database_id == "company_ids":
-        return validate_company_database(
-            path
-        )
+        return validate_company_database(path)
+
+    if database_id in ("ieee_ma_l", "ieee_ma_m"):
+        return validate_csv_database(path)
 
     if database_id in (
-        "ieee_ma_l",
-        "ieee_ma_m",
+        "gatt_services",
+        "gatt_characteristics",
+        "gatt_descriptors",
     ):
-        return validate_csv_database(
-            path
-        )
+        return validate_gatt_database(path)
 
-    raise ValueError(
-        f"Unknown database: {database_id}"
-    )
+    raise ValueError(f"Unknown database: {database_id}")
+
 
 
 def download_database(
     database_id,
     url=None
 ):
+
     """
     Download and validate one database.
 

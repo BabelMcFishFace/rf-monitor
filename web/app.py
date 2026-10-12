@@ -28,8 +28,9 @@ import sqlite3
 import subprocess
 import sys
 import time
-from pathlib import Path
 
+from pathlib import Path
+from web.offline_database import lookup_gatt_service
 from flask import (
     Flask,
     abort,
@@ -1213,6 +1214,11 @@ def device_detail(address):
                 )
             )
 
+        fingerprints = [
+            add_service_uuid_details(row)
+            for row in fingerprints
+        ]
+
         return render_template(
             "device.html",
             device=device,
@@ -1225,6 +1231,44 @@ def device_detail(address):
     finally:
 
         db.close()
+
+
+def add_service_uuid_details(record):
+    """
+    Add human-readable names for service UUIDs without changing
+    the original stored service_uuids field.
+    """
+
+    record = dict(record)
+
+    try:
+        uuids = json.loads(
+            record.get("service_uuids") or "[]"
+        )
+    except (json.JSONDecodeError, TypeError):
+        uuids = []
+
+    if not isinstance(uuids, list):
+        uuids = []
+
+    details = []
+
+    for uuid in uuids:
+        name = lookup_gatt_service(uuid)
+
+        details.append({
+            "uuid": str(uuid),
+            "name": name,
+            "display": (
+                f"{name} ({uuid})"
+                if name
+                else str(uuid)
+            ),
+        })
+
+    record["service_uuid_details"] = details
+
+    return record
 
 
 # ===========================================================================
@@ -1316,12 +1360,12 @@ def api_device(address):
             "manufacturers": manufacturers,
 
             "fingerprints": [
-                dict(row)
+                add_service_uuid_details(row)
                 for row in fingerprints
             ],
 
             "observations": [
-                dict(row)
+                add_service_uuid_details(row)
                 for row in observations
             ],
         })

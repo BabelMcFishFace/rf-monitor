@@ -44,9 +44,14 @@ The original BLE observations are never modified by this program.
 All processing is local to the Raspberry Pi.
 """
 
-
 import json
 import sqlite3
+
+from web.offline_database import (
+    lookup_gatt_service,
+    lookup_gatt_characteristic,
+    lookup_gatt_descriptor,
+)
 
 
 # -------------------------------------------------------------------
@@ -84,6 +89,32 @@ def hex_starts_with(value, prefix):
         prefix.lower()
     )
 
+
+def describe_gatt_uuid(uuid, uuid_type="service"):
+    """
+    Resolve a GATT UUID using the local offline databases.
+
+    Returns the UUID and its resolved name, or the UUID alone
+    when no local assignment is available.
+    """
+
+    lookup_functions = {
+        "service": lookup_gatt_service,
+        "characteristic": lookup_gatt_characteristic,
+        "descriptor": lookup_gatt_descriptor,
+    }
+
+    lookup = lookup_functions.get(uuid_type.lower())
+
+    if lookup is None:
+        return str(uuid)
+
+    name = lookup(uuid)
+
+    if name:
+        return f"{name} ({uuid})"
+
+    return str(uuid)
 
 # -------------------------------------------------------------------
 # Signature database

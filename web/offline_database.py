@@ -36,6 +36,11 @@ MA_L_FILE = IEEE_DIR / "ma-l.csv"
 
 MA_M_FILE = IEEE_DIR / "ma-m.csv"
 
+GATT_SERVICES_FILE = DATA_DIR / "service_uuids.json"
+
+GATT_CHARACTERISTICS_FILE = DATA_DIR / "characteristic_uuids.json"
+
+GATT_DESCRIPTORS_FILE = DATA_DIR / "descriptor_uuids.json"
 
 # ===========================================================================
 # Database definitions
@@ -69,6 +74,37 @@ DATABASES = {
             "oui28/mam.csv"
         ),
     },
+
+    "gatt_services": {
+        "name": "Bluetooth GATT Services",
+        "filename": GATT_SERVICES_FILE,
+        "url": (
+            "https://raw.githubusercontent.com/"
+            "nordicsemi/bluetooth-numbers-database/"
+            "master/v1/service_uuids.json"
+        ),
+    },
+
+    "gatt_characteristics": {
+        "name": "Bluetooth GATT Characteristics",
+        "filename": GATT_CHARACTERISTICS_FILE,
+        "url": (
+            "https://raw.githubusercontent.com/"
+            "nordicsemi/bluetooth-numbers-database/"
+            "master/v1/characteristic_uuids.json"
+        ),
+    },
+
+    "gatt_descriptors": {
+        "name": "Bluetooth GATT Descriptors",
+        "filename": GATT_DESCRIPTORS_FILE,
+        "url": (
+            "https://raw.githubusercontent.com/"
+            "nordicsemi/bluetooth-numbers-database/"
+            "master/v1/descriptor_uuids.json"
+        ),
+    },
+
 }
 
 
@@ -360,6 +396,123 @@ def lookup_mac(mac):
         }
 
     return None
+
+
+# ===========================================================================
+# Bluetooth GATT UUID lookups
+# ===========================================================================
+
+import re
+from functools import lru_cache
+
+
+def normalise_uuid(value):
+    """Normalise 16-bit, 32-bit and 128-bit Bluetooth UUIDs."""
+
+    if value is None:
+        return None
+
+    value = str(value).strip().lower()
+
+    if value.startswith("0x"):
+        value = value[2:]
+
+    value = value.replace("-", "").replace("{", "").replace("}", "")
+
+    if not re.fullmatch(r"[0-9a-f]+", value):
+        return None
+
+    if len(value) == 4:
+        value = "0000" + value
+
+    if len(value) == 8:
+        value += "00001000800000805f9b34fb"
+
+    if len(value) != 32:
+        return None
+
+    return value
+
+
+@lru_cache(maxsize=3)
+def _load_gatt_database(filename, modified_ns):
+    """Load and index a downloaded Nordic GATT JSON file."""
+
+    try:
+        with Path(filename).open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+
+    if isinstance(data, dict):
+        if isinstance(data.get("uuids"), list):
+            data = data["uuids"]
+        else:
+            data = [
+                {"identifier": key, "name": value}
+                for key, value in data.items()
+                if isinstance(value, str)
+            ]
+
+    if not isinstance(data, list):
+        return {}
+
+    result = {}
+
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+
+        identifier = (
+            entry.get("uuid")
+            or entry.get("value")
+            or entry.get("identifier")
+        )
+
+        name = entry.get("name") or entry.get("description")
+        normalised = normalise_uuid(identifier)
+
+        if normalised and name:
+            result[normalised] = str(name).strip()
+
+    return result
+
+
+def _lookup_gatt_uuid(path, uuid):
+    """Look up a UUID in a local GATT database."""
+
+    normalised = normalise_uuid(uuid)
+
+    if not normalised:
+        return None
+
+    try:
+        modified_ns = path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+    return _load_gatt_database(
+        str(path),
+        modified_ns
+    ).get(normalised)
+
+
+def lookup_gatt_service(uuid):
+    """Return the assigned name of a GATT service UUID."""
+
+    return _lookup_gatt_uuid(GATT_SERVICES_FILE, uuid)
+
+
+def lookup_gatt_characteristic(uuid):
+    """Return the assigned name of a GATT characteristic UUID."""
+
+    return _lookup_gatt_uuid(GATT_CHARACTERISTICS_FILE, uuid)
+
+
+def lookup_gatt_descriptor(uuid):
+    """Return the assigned name of a GATT descriptor UUID."""
+
+    return _lookup_gatt_uuid(GATT_DESCRIPTORS_FILE, uuid)
 
 
 # ===========================================================================

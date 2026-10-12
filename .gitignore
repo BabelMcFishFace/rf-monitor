@@ -19,3 +19,7 @@ rf_monitor.db
 *.before-*.py
 *.before-*.css
 
+
+# Downloaded IEEE manufacturer databases
+/data/ieee/ma-l.csv
+/data/ieee/ma-m.csv

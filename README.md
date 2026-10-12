@@ -84,15 +84,29 @@ The collector does not need to be running for the web dashboard itself to work.
 
 ## Manufacturer databases
 
-The repository contains the offline manufacturer databases:
+RF Monitor uses local copies of manufacturer databases to identify
+Bluetooth devices without requiring an Internet connection during
+normal operation.
+
+The Bluetooth Company ID database is stored in the repository:
 
     data/company_ids.json
+
+The IEEE MA-L and MA-M databases are downloaded from IEEE and stored
+locally:
+
     data/ieee/ma-l.csv
     data/ieee/ma-m.csv
 
-These are used to identify Bluetooth device manufacturers.
+The IEEE CSV files are not included in the Git repository.
 
-The Settings page provides controls for updating the manufacturer databases.
+On a fresh installation, open the Settings page and download both
+IEEE databases before relying on offline manufacturer identification.
+
+The Settings page provides controls for downloading and updating
+the manufacturer databases.
+
+Downloaded databases remain available locally for offline use.
 
 ## Database
 
@@ -116,9 +130,7 @@ This means that device data from one Raspberry Pi is not automatically transferr
     ├── requirements.txt
     ├── data/
     │   ├── company_ids.json
-    │   └── ieee/
-    │       ├── ma-l.csv
-    │       └── ma-m.csv
+    │   └── ieee/              # Downloaded databases
     └── web/
         ├── app.py
         ├── config.py
