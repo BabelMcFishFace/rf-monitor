@@ -296,24 +296,6 @@ Then verify:
 
 ---
 
-## Git status at the last checkpoint
-
-The last status showed:
-
-    modified:   web/app.py
-    modified:   web/manufacturer_lookup.py
-    modified:   web/templates/settings.html
-
-Untracked backup files:
-
-    web/app.py.backup_20261006_160752
-    web/manufacturer_lookup.py.backup_20261006_160752
-    web/templates/settings.html.backup_20261006_160752
-
-The changes had NOT yet been committed or pushed at that checkpoint.
-
----
-
 ## Before committing
 
 Run:
