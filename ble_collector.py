@@ -1,44 +1,27 @@
 #!/usr/bin/env python3
 
 """
-BLE Environment Collector - v2
+BLE Environment Collector - v3
 
-Purpose
--------
-Continuously listen for Bluetooth Low Energy advertisements and maintain
-a local SQLite database containing:
+Features
+--------
+- Preserves existing v1/v2 SQLite tables and data.
+- Avoids duplicate observations for unchanged advertisements.
+- Stores new fingerprints only when advertisement data changes.
+- Maintains RSSI statistics without writing every advertisement to disk.
+- Batches database updates to reduce SD-card writes.
+- Keeps Bluetooth addresses out of terminal output.
+- Supports Bluetooth adapter selection through app_settings.
 
-    * Known BLE devices
-    * BLE fingerprints
-    * Selected BLE observations
-    * RSSI statistics
+Observation policy
+------------------
+A detailed observation is stored when:
+    1. A device is first discovered.
+    2. Its advertisement fingerprint changes.
 
-Privacy
--------
-All collected information stays on this Raspberry Pi.
+RSSI-only changes do not create observations.
 
-The Bluetooth address (MAC) is stored locally in SQLite because it is useful
-for correlating observations from the same device.
-
-The address is NOT printed by the collector. This makes it safer to paste
-collector output into a support chat without accidentally exposing device
-addresses.
-
-Design
-------
-A BLE device may advertise many times per second. Recording every packet
-creates unnecessary SD-card writes.
-
-Instead, we:
-
-    1. Update the device's current state for every advertisement.
-    2. Build a fingerprint from the advertisement contents.
-    3. Store a fingerprint when it has not been seen before.
-    4. Store a detailed observation periodically, or when the fingerprint
-       changes.
-    5. Keep RSSI statistics for the device.
-
-Existing v1 tables/data are preserved.
+Database updates are periodically flushed to SQLite.
 """
 
 import asyncio
@@ -51,90 +34,35 @@ from datetime import datetime, timezone
 from bleak import BleakScanner
 
 
-# ---------------------------------------------------------------------------
+# ============================================================
 # Configuration
-# ---------------------------------------------------------------------------
+# ============================================================
 
-# SQLite database is kept in the project directory.
 DB_PATH = "rf_monitor.db"
 
+# How frequently pending device/fingerprint changes are saved.
+FLUSH_INTERVAL = 5.0
 
-def get_bluetooth_adapter(db):
-    """
-    Read the Bluetooth adapter selected in the web settings.
+# RSSI-only changes are ignored when deciding whether to record
+# an observation. Set True to enable threshold-based observations.
+RECORD_SIGNIFICANT_RSSI_CHANGES = False
 
-    'auto' means use Bleak's default BlueZ adapter.
-    """
+# Used only when RECORD_SIGNIFICANT_RSSI_CHANGES is True.
+RSSI_CHANGE_THRESHOLD = 10
 
-    try:
-
-        row = db.execute("""
-            SELECT value
-            FROM app_settings
-            WHERE key = 'bluetooth_adapter'
-        """).fetchone()
-
-    except sqlite3.OperationalError:
-
-        # Older databases/installations may not have the table yet.
-        return "auto"
-
-    if row is None:
-        return "auto"
-
-    value = row[0]
-
-    if value is None:
-        return "auto"
-
-    value = str(value).strip()
-
-    return value or "auto"
-
-# How often to store a normal RSSI observation for a device even when the
-# advertisement fingerprint has not changed.
-#
-# Example:
-#   A device advertises every 100 ms.
-#   We do NOT want 10 database writes every second.
-#
-# Instead, once every 30 seconds is enough to build a useful RSSI history.
-OBSERVATION_INTERVAL = 30.0
+# Keep terminal output manageable.
+PRINT_EVENTS = True
 
 
-# ---------------------------------------------------------------------------
-# Time helpers
-# ---------------------------------------------------------------------------
+# ============================================================
+# Time and conversion helpers
+# ============================================================
 
 def now():
-    """
-    Return the current UTC time in ISO-8601 format.
-
-    Using UTC means timestamps remain unambiguous if the Pi's timezone
-    changes later or if the database is copied to another machine.
-    """
     return datetime.now(timezone.utc).isoformat()
 
 
-# ---------------------------------------------------------------------------
-# Data conversion helpers
-# ---------------------------------------------------------------------------
-
 def json_safe_manufacturer_data(data):
-    """
-    Convert Bleak's manufacturer_data dictionary into JSON-safe data.
-
-    Bleak gives us something similar to:
-
-        {
-            1234: b'\\x01\\x02\\x03'
-        }
-
-    SQLite will store JSON text, so binary payloads are converted to hex.
-
-    The manufacturer/company ID is converted to a string because JSON object
-    keys must be strings.
-    """
     return {
         str(key): value.hex()
         for key, value in data.items()
@@ -142,12 +70,6 @@ def json_safe_manufacturer_data(data):
 
 
 def json_safe_service_data(data):
-    """
-    Convert Bleak's service_data dictionary into JSON-safe data.
-
-    BLE service-data payloads are binary, so we store them as hexadecimal
-    strings.
-    """
     return {
         str(key): value.hex()
         for key, value in data.items()
@@ -155,85 +77,50 @@ def json_safe_service_data(data):
 
 
 def normalise_list(values):
-    """
-    Return a sorted list of strings.
-
-    Advertisement data can sometimes arrive in a different order even though
-    the actual information is the same.
-
-    Sorting makes our fingerprint stable.
-
-    Example:
-
-        ["UUID-B", "UUID-A"]
-
-    becomes:
-
-        ["UUID-A", "UUID-B"]
-    """
-    return sorted(str(value) for value in values)
+    return sorted(str(value) for value in (values or []))
 
 
-# ---------------------------------------------------------------------------
+def get_bluetooth_adapter(db):
+    try:
+        row = db.execute("""
+            SELECT value
+            FROM app_settings
+            WHERE key = 'bluetooth_adapter'
+        """).fetchone()
+    except sqlite3.OperationalError:
+        return "auto"
+
+    if not row or not row[0]:
+        return "auto"
+
+    return str(row[0]).strip() or "auto"
+
+
+# ============================================================
 # Fingerprinting
-# ---------------------------------------------------------------------------
+# ============================================================
 
 def build_fingerprint(advertisement, name):
-    """
-    Build a deterministic fingerprint from advertisement characteristics.
-
-    The fingerprint intentionally does NOT include:
-
-        * MAC address
-        * RSSI
-        * timestamp
-
-    Those values describe the observation, not the advertisement identity.
-
-    The fingerprint DOES include:
-
-        * advertised name
-        * service UUIDs
-        * manufacturer data
-        * service data
-        * TX power
-
-    This lets us distinguish between:
-
-        Device identity
-            and
-        Advertisement characteristics
-
-    A device can therefore have more than one fingerprint if its advertised
-    data changes.
-    """
-
-    manufacturer_data = json_safe_manufacturer_data(
-        advertisement.manufacturer_data
-    )
-
-    service_data = json_safe_service_data(
-        advertisement.service_data
-    )
-
     fingerprint_data = {
         "name": name or "",
         "service_uuids": normalise_list(
             advertisement.service_uuids
         ),
-        "manufacturer_data": manufacturer_data,
-        "service_data": service_data,
+        "manufacturer_data": json_safe_manufacturer_data(
+            advertisement.manufacturer_data
+        ),
+        "service_data": json_safe_service_data(
+            advertisement.service_data
+        ),
         "tx_power": advertisement.tx_power,
     }
 
-    # JSON with sorted keys gives us a deterministic representation.
     canonical = json.dumps(
         fingerprint_data,
         sort_keys=True,
-        separators=(",", ":")
+        separators=(",", ":"),
     )
 
-    # SHA-256 gives us a compact identifier for the fingerprint.
     fingerprint_hash = hashlib.sha256(
         canonical.encode("utf-8")
     ).hexdigest()
@@ -241,35 +128,16 @@ def build_fingerprint(advertisement, name):
     return fingerprint_hash, fingerprint_data
 
 
-# ---------------------------------------------------------------------------
+# ============================================================
 # Database setup
-# ---------------------------------------------------------------------------
+# ============================================================
 
 def init_db():
-    """
-    Create the database and tables if they do not already exist.
-
-    IMPORTANT:
-    ----------
-    This function deliberately uses CREATE TABLE IF NOT EXISTS.
-
-    It does not delete or recreate the existing database.
-
-    That means the observations already collected by v1 remain available.
-    """
-
     db = sqlite3.connect(DB_PATH)
 
-    # ---------------------------------------------------------------
-    # Existing device table
-    # ---------------------------------------------------------------
-    #
-    # One row represents one Bluetooth address observed by the Pi.
-    #
-    # RSSI statistics are added to the existing table using ALTER TABLE
-    # below. SQLite does not support IF NOT EXISTS for ADD COLUMN, so
-    # we check the existing schema first.
-    #
+    # Reduce overhead while retaining normal SQLite durability.
+    db.execute("PRAGMA busy_timeout = 5000")
+
     db.execute("""
         CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -278,14 +146,8 @@ def init_db():
     """)
 
     db.execute("""
-        INSERT OR IGNORE INTO app_settings (
-            key,
-            value
-        )
-        VALUES (
-            'bluetooth_adapter',
-            'auto'
-        )
+        INSERT OR IGNORE INTO app_settings (key, value)
+        VALUES ('bluetooth_adapter', 'auto')
     """)
 
     db.execute("""
@@ -299,15 +161,6 @@ def init_db():
         )
     """)
 
-    # ---------------------------------------------------------------
-    # Existing raw observation table
-    # ---------------------------------------------------------------
-    #
-    # This table is intentionally retained.
-    #
-    # Older versions of the collector may have recorded every advertisement.
-    # We don't delete those records.
-    #
     db.execute("""
         CREATE TABLE IF NOT EXISTS ble_observations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,14 +175,6 @@ def init_db():
         )
     """)
 
-    # ---------------------------------------------------------------
-    # Fingerprint table
-    # ---------------------------------------------------------------
-    #
-    # A single BLE device can advertise different data at different times.
-    #
-    # Therefore fingerprints are stored separately from devices.
-    #
     db.execute("""
         CREATE TABLE IF NOT EXISTS ble_fingerprints (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,10 +192,6 @@ def init_db():
         )
     """)
 
-    # ---------------------------------------------------------------
-    # Indexes
-    # ---------------------------------------------------------------
-
     db.execute("""
         CREATE INDEX IF NOT EXISTS idx_ble_observations_address
         ON ble_observations(address)
@@ -366,12 +207,7 @@ def init_db():
         ON ble_fingerprints(address)
     """)
 
-    # ---------------------------------------------------------------
-    # Add RSSI statistics to the device table.
-    #
-    # These columns won't exist in a v1 database, so check first.
-    # ---------------------------------------------------------------
-
+    # Add RSSI columns to older databases without deleting data.
     existing_columns = {
         row[1]
         for row in db.execute(
@@ -379,77 +215,131 @@ def init_db():
         ).fetchall()
     }
 
-    if "min_rssi" not in existing_columns:
-        db.execute("""
-            ALTER TABLE ble_devices
-            ADD COLUMN min_rssi INTEGER
-        """)
+    migrations = {
+        "min_rssi": "INTEGER",
+        "max_rssi": "INTEGER",
+        "avg_rssi": "REAL",
+        "rssi_samples": "INTEGER NOT NULL DEFAULT 0",
+    }
 
-    if "max_rssi" not in existing_columns:
-        db.execute("""
-            ALTER TABLE ble_devices
-            ADD COLUMN max_rssi INTEGER
-        """)
-
-    if "avg_rssi" not in existing_columns:
-        db.execute("""
-            ALTER TABLE ble_devices
-            ADD COLUMN avg_rssi REAL
-        """)
-
-    if "rssi_samples" not in existing_columns:
-        db.execute("""
-            ALTER TABLE ble_devices
-            ADD COLUMN rssi_samples INTEGER NOT NULL DEFAULT 0
-        """)
+    for column, definition in migrations.items():
+        if column not in existing_columns:
+            db.execute(
+                f"ALTER TABLE ble_devices "
+                f"ADD COLUMN {column} {definition}"
+            )
 
     db.commit()
 
     return db
 
 
-# ---------------------------------------------------------------------------
-# Device state
-# ---------------------------------------------------------------------------
+# ============================================================
+# In-memory state
+# ============================================================
 
-# This dictionary exists only while the collector is running.
-#
-# It prevents us from having to query SQLite for every BLE advertisement.
-#
-# Example:
-#
-#     last_observation[address] = monotonic_time
-#
-last_observation = {}
+# State is loaded from SQLite when the collector starts.
+# Values are updated for every advertisement, but SQLite writes
+# are deferred until flush_pending().
+
+device_state = {}
+pending_devices = set()
+pending_fingerprints = {}
+last_observation_fingerprint = {}
+last_observation_rssi = {}
+
+# Existing fingerprints are tracked so repeated advertisements do
+# not repeatedly query or insert the same fingerprint.
+known_fingerprints = set()
+
+# Number of advertisements received for each fingerprint since
+# the last flush. Used to batch the fingerprint sightings counter.
+pending_fingerprint_sightings = {}
 
 
-# ---------------------------------------------------------------------------
-# Recording
-# ---------------------------------------------------------------------------
+def load_state(db):
+    for row in db.execute("""
+        SELECT address, name, first_seen, last_seen, last_rssi,
+               sightings, min_rssi, max_rssi, avg_rssi, rssi_samples
+        FROM ble_devices
+    """):
+        (
+            address, name, first_seen, last_seen, last_rssi,
+            sightings, min_rssi, max_rssi, avg_rssi, rssi_samples
+        ) = row
+
+        device_state[address] = {
+            "name": name,
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "last_rssi": last_rssi,
+            "sightings": sightings,
+            "min_rssi": min_rssi,
+            "max_rssi": max_rssi,
+            "avg_rssi": avg_rssi,
+            "rssi_samples": rssi_samples,
+            "dirty": False,
+        }
+
+    for address, fingerprint in db.execute("""
+        SELECT address, fingerprint
+        FROM ble_fingerprints
+    """):
+        known_fingerprints.add((address, fingerprint))
+
+    # Determine the most recently observed fingerprint for each
+    # device so restarting the collector doesn't create a duplicate
+    # observation for an unchanged advertisement.
+    for address, fingerprint in db.execute("""
+        SELECT o.address, f.fingerprint
+        FROM ble_observations AS o
+        JOIN ble_fingerprints AS f
+          ON f.address = o.address
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM ble_observations AS newer
+            WHERE newer.address = o.address
+              AND (
+                  newer.timestamp > o.timestamp
+                  OR (
+                      newer.timestamp = o.timestamp
+                      AND newer.id > o.id
+                  )
+              )
+        )
+    """):
+        last_observation_fingerprint[address] = fingerprint
+
+    # The previous observation's RSSI is useful only for the optional
+    # threshold mode. Load it from the latest observation.
+    for address, rssi in db.execute("""
+        SELECT o.address, o.rssi
+        FROM ble_observations AS o
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM ble_observations AS newer
+            WHERE newer.address = o.address
+              AND (
+                  newer.timestamp > o.timestamp
+                  OR (
+                      newer.timestamp = o.timestamp
+                      AND newer.id > o.id
+                  )
+              )
+        )
+    """):
+        last_observation_rssi[address] = rssi
+
+
+# ============================================================
+# Advertisement processing
+# ============================================================
 
 def record(db, device, advertisement):
-    """
-    Process one BLE advertisement.
-
-    This function:
-
-        * Updates the device record
-        * Updates RSSI statistics
-        * Calculates the advertisement fingerprint
-        * Records new fingerprints
-        * Periodically records detailed observations
-    """
-
     timestamp = now()
-
     address = device.address
 
-    # Prefer the advertisement's local name because it is what was actually
-    # present in the BLE advertisement.
-    #
-    # Fall back to device.name if necessary.
     name = advertisement.local_name or device.name
-
     rssi = advertisement.rssi
 
     service_uuids = normalise_list(
@@ -466,183 +356,307 @@ def record(db, device, advertisement):
 
     tx_power = advertisement.tx_power
 
-    # ---------------------------------------------------------------
-    # Build advertisement fingerprint
-    # ---------------------------------------------------------------
-
     fingerprint_hash, fingerprint_data = build_fingerprint(
         advertisement,
-        name
+        name,
     )
 
-    # ---------------------------------------------------------------
-    # Update the main device record
-    # ---------------------------------------------------------------
+    fingerprint_key = (address, fingerprint_hash)
+    state = device_state.get(address)
+    new_device = state is None
 
-    db.execute("""
-        INSERT INTO ble_devices (
-            address,
-            name,
-            first_seen,
-            last_seen,
-            last_rssi,
-            sightings,
-            min_rssi,
-            max_rssi,
-            avg_rssi,
-            rssi_samples
-        )
-        VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, 1)
+    # --------------------------------------------------------
+    # Initialise a newly discovered device in memory.
+    # --------------------------------------------------------
 
-        ON CONFLICT(address) DO UPDATE SET
+    if new_device:
+        state = {
+            "name": name,
+            "first_seen": timestamp,
+            "last_seen": timestamp,
+            "last_rssi": rssi,
+            "sightings": 0,
+            "min_rssi": None,
+            "max_rssi": None,
+            "avg_rssi": None,
+            "rssi_samples": 0,
+            "dirty": True,
+        }
 
-            -- Only replace the stored name if the new advertisement
-            -- actually provides one.
-            name = COALESCE(excluded.name, ble_devices.name),
+        device_state[address] = state
 
-            last_seen = excluded.last_seen,
-            last_rssi = excluded.last_rssi,
+    # --------------------------------------------------------
+    # Update device statistics in memory.
+    # --------------------------------------------------------
 
-            sightings = ble_devices.sightings + 1,
+    state["last_seen"] = timestamp
+    state["last_rssi"] = rssi
 
-            min_rssi =
-                CASE
-                    WHEN ble_devices.min_rssi IS NULL
-                         OR excluded.last_rssi < ble_devices.min_rssi
-                    THEN excluded.last_rssi
-                    ELSE ble_devices.min_rssi
-                END,
+    if name:
+        state["name"] = name
 
-            max_rssi =
-                CASE
-                    WHEN ble_devices.max_rssi IS NULL
-                         OR excluded.last_rssi > ble_devices.max_rssi
-                    THEN excluded.last_rssi
-                    ELSE ble_devices.max_rssi
-                END,
+    state["sightings"] += 1
 
-            avg_rssi =
-                CASE
-                    WHEN excluded.last_rssi IS NULL
-                    THEN ble_devices.avg_rssi
+    if rssi is not None:
+        if state["min_rssi"] is None:
+            state["min_rssi"] = rssi
+        else:
+            state["min_rssi"] = min(
+                state["min_rssi"], rssi
+            )
 
-                    WHEN ble_devices.avg_rssi IS NULL
-                    THEN excluded.last_rssi
+        if state["max_rssi"] is None:
+            state["max_rssi"] = rssi
+        else:
+            state["max_rssi"] = max(
+                state["max_rssi"], rssi
+            )
 
-                    ELSE (
-                        (
-                            ble_devices.avg_rssi *
-                            ble_devices.rssi_samples
-                        )
-                        +
-                        excluded.last_rssi
-                    )
-                    /
-                    (ble_devices.rssi_samples + 1)
-                END,
+        samples = state["rssi_samples"]
+        avg = state["avg_rssi"]
 
-            rssi_samples =
-                ble_devices.rssi_samples + 1
-    """, (
-        address,
-        name,
-        timestamp,
-        timestamp,
-        rssi,
-        rssi,
-        rssi,
-        rssi
-    ))
+        if avg is None or samples == 0:
+            state["avg_rssi"] = float(rssi)
+        else:
+            state["avg_rssi"] = (
+                avg * samples + rssi
+            ) / (samples + 1)
 
-    # ---------------------------------------------------------------
-    # Check whether this fingerprint already exists for this device.
-    # ---------------------------------------------------------------
+        state["rssi_samples"] += 1
 
-    existing = db.execute("""
-        SELECT id
-        FROM ble_fingerprints
-        WHERE address = ?
-          AND fingerprint = ?
-    """, (
-        address,
-        fingerprint_hash
-    )).fetchone()
+    state["dirty"] = True
+    pending_devices.add(address)
 
-    if existing:
+    # --------------------------------------------------------
+    # Fingerprint tracking.
+    # --------------------------------------------------------
 
-        # We've seen this exact advertisement fingerprint before.
-        #
-        # Update its last-seen time and sighting count.
-        db.execute("""
-            UPDATE ble_fingerprints
-            SET
-                last_seen = ?,
-                sightings = sightings + 1
-            WHERE id = ?
-        """, (
-            timestamp,
-            existing[0]
-        ))
+    new_fingerprint = fingerprint_key not in known_fingerprints
 
-        new_fingerprint = False
+    if new_fingerprint:
+        known_fingerprints.add(fingerprint_key)
+
+        pending_fingerprints[fingerprint_key] = {
+            "address": address,
+            "fingerprint": fingerprint_hash,
+            "first_seen": timestamp,
+            "last_seen": timestamp,
+            "sightings": 1,
+            "name": name,
+            "service_uuids": json.dumps(service_uuids),
+            "manufacturer_data": json.dumps(
+                manufacturer_data
+            ),
+            "service_data": json.dumps(service_data),
+            "tx_power": tx_power,
+        }
 
     else:
+        pending_fingerprint_sightings[
+            fingerprint_key
+        ] = pending_fingerprint_sightings.get(
+            fingerprint_key, 0
+        ) + 1
 
-        # First time this particular advertisement fingerprint has been
-        # associated with this device.
-        db.execute("""
-            INSERT INTO ble_fingerprints (
-                address,
-                fingerprint,
-                first_seen,
-                last_seen,
-                sightings,
-                name,
-                service_uuids,
-                manufacturer_data,
-                service_data,
-                tx_power
-            )
-            VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
-        """, (
-            address,
-            fingerprint_hash,
-            timestamp,
-            timestamp,
-            name,
-            json.dumps(service_uuids),
-            json.dumps(manufacturer_data),
-            json.dumps(service_data),
-            tx_power
-        ))
+    # --------------------------------------------------------
+    # Decide whether to create a detailed observation.
+    # --------------------------------------------------------
 
-        new_fingerprint = True
-
-    # ---------------------------------------------------------------
-    # Decide whether to store a detailed observation.
-    # ---------------------------------------------------------------
-    #
-    # We always store the first observation for a device.
-    #
-    # After that, we normally wait OBSERVATION_INTERVAL seconds.
-    #
-    # A NEW fingerprint is also stored immediately because a change in
-    # advertisement data is interesting.
-    # ---------------------------------------------------------------
-
-    current_monotonic = time.monotonic()
-
-    previous_time = last_observation.get(address)
-
-    should_record = (
-        previous_time is None
-        or new_fingerprint
-        or (current_monotonic - previous_time) >= OBSERVATION_INTERVAL
+    previous_fingerprint = (
+        last_observation_fingerprint.get(address)
     )
 
-    if should_record:
+    should_record = (
+        new_device
+        or previous_fingerprint != fingerprint_hash
+    )
 
-        db.execute("""
+    if (
+        not should_record
+        and RECORD_SIGNIFICANT_RSSI_CHANGES
+        and rssi is not None
+    ):
+        previous_rssi = last_observation_rssi.get(address)
+
+        if (
+            previous_rssi is not None
+            and abs(rssi - previous_rssi)
+            >= RSSI_CHANGE_THRESHOLD
+        ):
+            should_record = True
+
+    if should_record:
+        # Store the pending observation in memory. It will be
+        # written to SQLite during the next flush.
+        pending_observation = {
+            "address": address,
+            "timestamp": timestamp,
+            "rssi": rssi,
+            "name": name,
+            "service_uuids": json.dumps(service_uuids),
+            "manufacturer_data": json.dumps(
+                manufacturer_data
+            ),
+            "service_data": json.dumps(service_data),
+            "tx_power": tx_power,
+        }
+
+        pending_observations.append(pending_observation)
+
+        last_observation_fingerprint[address] = (
+            fingerprint_hash
+        )
+
+        last_observation_rssi[address] = rssi
+
+    if PRINT_EVENTS and (new_device or new_fingerprint or should_record):
+        flags = []
+
+        if new_device:
+            flags.append("NEW-DEVICE")
+
+        if new_fingerprint:
+            flags.append("NEW-FINGERPRINT")
+
+        if should_record:
+            flags.append("OBSERVED")
+
+        print(
+            f"RSSI={str(rssi):>4} "
+            f"name={(name or '')!r} "
+            f"services={len(service_uuids)} "
+            f"manufacturer={len(manufacturer_data)} "
+            f"service_data={len(service_data)} "
+            f"[{','.join(flags)}]"
+        )
+
+
+pending_observations = []
+
+
+# ============================================================
+# Batched database writes
+# ============================================================
+
+def flush_pending(db):
+    global pending_observations
+
+    if not (
+        pending_devices
+        or pending_fingerprints
+        or pending_fingerprint_sightings
+        or pending_observations
+    ):
+        return
+
+    try:
+        db.execute("BEGIN")
+
+        # ----------------------------------------------------
+        # Save changed device state.
+        # ----------------------------------------------------
+
+        for address in pending_devices:
+            state = device_state[address]
+
+            db.execute("""
+                INSERT INTO ble_devices (
+                    address,
+                    name,
+                    first_seen,
+                    last_seen,
+                    last_rssi,
+                    sightings,
+                    min_rssi,
+                    max_rssi,
+                    avg_rssi,
+                    rssi_samples
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+                ON CONFLICT(address) DO UPDATE SET
+                    name = COALESCE(
+                        excluded.name,
+                        ble_devices.name
+                    ),
+                    last_seen = excluded.last_seen,
+                    last_rssi = excluded.last_rssi,
+                    sightings = excluded.sightings,
+                    min_rssi = excluded.min_rssi,
+                    max_rssi = excluded.max_rssi,
+                    avg_rssi = excluded.avg_rssi,
+                    rssi_samples = excluded.rssi_samples
+            """, (
+                address,
+                state["name"],
+                state["first_seen"],
+                state["last_seen"],
+                state["last_rssi"],
+                state["sightings"],
+                state["min_rssi"],
+                state["max_rssi"],
+                state["avg_rssi"],
+                state["rssi_samples"],
+            ))
+
+        # ----------------------------------------------------
+        # Insert genuinely new fingerprints.
+        # ----------------------------------------------------
+
+        for item in pending_fingerprints.values():
+            db.execute("""
+                INSERT OR IGNORE INTO ble_fingerprints (
+                    address,
+                    fingerprint,
+                    first_seen,
+                    last_seen,
+                    sightings,
+                    name,
+                    service_uuids,
+                    manufacturer_data,
+                    service_data,
+                    tx_power
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                item["address"],
+                item["fingerprint"],
+                item["first_seen"],
+                item["last_seen"],
+                item["sightings"],
+                item["name"],
+                item["service_uuids"],
+                item["manufacturer_data"],
+                item["service_data"],
+                item["tx_power"],
+            ))
+
+        # ----------------------------------------------------
+        # Batch sightings and last_seen updates for fingerprints.
+        # ----------------------------------------------------
+
+        for (address, fingerprint), count in (
+            pending_fingerprint_sightings.items()
+        ):
+            db.execute("""
+                UPDATE ble_fingerprints
+                SET
+                    last_seen = ?,
+                    sightings = sightings + ?
+                WHERE address = ?
+                  AND fingerprint = ?
+            """, (
+                now(),
+                count,
+                address,
+                fingerprint,
+            ))
+
+        # ----------------------------------------------------
+        # Insert observations selected by the fingerprint logic.
+        # ----------------------------------------------------
+
+        db.executemany("""
             INSERT INTO ble_observations (
                 address,
                 timestamp,
@@ -654,144 +668,112 @@ def record(db, device, advertisement):
                 tx_power
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            address,
-            timestamp,
-            rssi,
-            name,
-            json.dumps(service_uuids),
-            json.dumps(manufacturer_data),
-            json.dumps(service_data),
-            tx_power
-        ))
+        """, [
+            (
+                item["address"],
+                item["timestamp"],
+                item["rssi"],
+                item["name"],
+                item["service_uuids"],
+                item["manufacturer_data"],
+                item["service_data"],
+                item["tx_power"],
+            )
+            for item in pending_observations
+        ])
 
-        last_observation[address] = current_monotonic
+        db.commit()
 
-    # Commit after processing the advertisement.
+    except Exception:
+        db.rollback()
+        raise
 
-    db.commit()
+    pending_devices.clear()
+    pending_fingerprints.clear()
+    pending_fingerprint_sightings.clear()
+    pending_observations.clear()
 
-    return new_fingerprint, should_record
 
-
-# ---------------------------------------------------------------------------
+# ============================================================
 # BLE callback
-# ---------------------------------------------------------------------------
+# ============================================================
 
 def detection_callback(device, advertisement):
-    """
-    Called by Bleak whenever a BLE advertisement is received.
-
-    IMPORTANT:
-    ----------
-    This callback should remain lightweight because BLE advertisements can
-    arrive frequently.
-    """
-
-    new_fingerprint, stored_observation = record(
-        detection_callback.db,
-        device,
-        advertisement
-    )
-
-    name = advertisement.local_name or device.name or ""
-
-    # Deliberately do NOT print the Bluetooth address.
-    #
-    # This makes terminal output safe to share without exposing the
-    # addresses of nearby devices.
-
-    flags = []
-
-    if new_fingerprint:
-        flags.append("NEW-FINGERPRINT")
-
-    if stored_observation:
-        flags.append("OBSERVED")
-
-    flag_text = ",".join(flags) if flags else "-"
-
-    print(
-        f"RSSI={advertisement.rssi:4} "
-        f"name={name!r} "
-        f"services={len(advertisement.service_uuids)} "
-        f"manufacturer={len(advertisement.manufacturer_data)} "
-        f"service_data={len(advertisement.service_data)} "
-        f"[{flag_text}]"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Main program
-# ---------------------------------------------------------------------------
-
-async def main():
-    """
-    Start the BLE scanner and keep it running until Ctrl-C.
-    """
-
-    db = init_db()
-
-    # Make the database available to the callback.
-    detection_callback.db = db
-
-    bluetooth_adapter = get_bluetooth_adapter(
-        db
-    )
-
-    print(
-        f"Bluetooth adapter: {bluetooth_adapter}"
-    )
-
-    scanner_kwargs = {
-        "detection_callback":
-            detection_callback
-    }
-
-    if bluetooth_adapter != "auto":
-
-        scanner_kwargs["adapter"] = (
-            bluetooth_adapter
+    try:
+        record(
+            detection_callback.db,
+            device,
+            advertisement,
+        )
+    except Exception as exc:
+        # Do not print the device address.
+        print(
+            f"BLE processing error: "
+            f"{type(exc).__name__}: {exc}"
         )
 
-    scanner = BleakScanner(
-        **scanner_kwargs
-    )
 
-    print("BLE collector v2 starting")
+# ============================================================
+# Main program
+# ============================================================
+
+async def main():
+    db = init_db()
+    load_state(db)
+
+    detection_callback.db = db
+
+    bluetooth_adapter = get_bluetooth_adapter(db)
+
+    print(f"Bluetooth adapter: {bluetooth_adapter}")
+    print("BLE collector v3 starting")
     print(f"Database: {DB_PATH}")
-    print(
-        f"Observation interval: "
-        f"{OBSERVATION_INTERVAL:g} seconds"
-    )
-    print("MAC addresses are stored locally but not printed.")
+    print(f"Database flush interval: {FLUSH_INTERVAL:g} seconds")
+    print("Unchanged advertisements will not create observations.")
+    print("RSSI-only changes will not create observations.")
+    print("Bluetooth addresses are not printed.")
     print("Press Ctrl-C to stop.")
     print()
 
-    await scanner.start()
+    scanner_kwargs = {
+        "detection_callback": detection_callback,
+    }
+
+    if bluetooth_adapter != "auto":
+        scanner_kwargs["adapter"] = bluetooth_adapter
+
+    scanner = BleakScanner(**scanner_kwargs)
 
     try:
+        await scanner.start()
 
-        # Keep the asyncio event loop alive while Bleak receives
-        # advertisements.
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(FLUSH_INTERVAL)
+            flush_pending(db)
+
+    except asyncio.CancelledError:
+        raise
 
     except KeyboardInterrupt:
-
         print("\nStopping...")
 
     finally:
+        try:
+            await scanner.stop()
+        except Exception:
+            pass
 
-        await scanner.stop()
-        db.close()
+        # Save anything still waiting in memory before exiting.
+        try:
+            flush_pending(db)
+        finally:
+            db.close()
 
         print("BLE collector stopped.")
 
 
-# ---------------------------------------------------------------------------
-# Program entry point
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
